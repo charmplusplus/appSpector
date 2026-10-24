@@ -75,6 +75,12 @@ class SiteTests(unittest.TestCase):
         self.assertIn("cd /work/alloc/me/appSpector/apps/pfield", script)
         self.assertIn("stdbuf -o0 -e0 srun --mpi=pmix -n 4 -c 64 ./pfield  +pe 16 ++server ++server-port 1234 +balancer GreedyRefineLB", script)
         self.assertEqual(out, "/work/alloc/me/appspector/jobs/pfield-%j.out")
+        # a site without a memory request leaves the line out
+        site2 = S.load_site(self.path)
+        site2.mem = ""
+        script2, _, _ = J.render_batch(site2, J.JobSpec(program="pfield"))
+        self.assertNotIn("--mem", script2)
+        self.assertIn("#SBATCH -t 00:30:00", script2)
 
 
 class AddProgramTests(unittest.TestCase):

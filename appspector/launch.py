@@ -44,28 +44,68 @@ def ssh(site, cmd, check=True, timeout=120):
 
 
 def master_open(site):
+    """True when an ssh control master to the alias is up (Duo sites)."""
     r = subprocess.run(["ssh", "-O", "check", site], capture_output=True, text=True)
     return r.returncode == 0
 
 
+def reachable(site):
+    """True when non-interactive ssh to the alias works: through an open
+    control master (Delta, Duo) or directly with key authentication (Anvil)."""
+    if master_open(site):
+        return True
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", site, "true"],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
 def forward_add(site, local_port, node, remote_port):
+    """Register a port forward: inside the control master when there is one
+    (removed again with -O cancel), otherwise as a background ssh process
+    (killed on cancel). The record in FWD_FILE says which."""
     spec = "%d:%s:%d" % (local_port, node, remote_port)
     forward_cancel(site)
-    r = subprocess.run(["ssh", "-O", "forward", "-L", spec, site], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise LaunchError("port forward %s failed: %s" % (spec, r.stderr.strip()))
+    if master_open(site):
+        r = subprocess.run(["ssh", "-O", "forward", "-L", spec, site], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise LaunchError("port forward %s failed: %s" % (spec, r.stderr.strip()))
+        record = spec
+    else:
+        r = subprocess.run(["ssh", "-f", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+                            "-L", spec, site], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise LaunchError("port forward %s failed: %s" % (spec, r.stderr.strip()))
+        pid = _find_forward_pid(spec)
+        record = "%s pid=%d" % (spec, pid)
     with open(FWD_FILE, "w") as f:
-        f.write(spec)
+        f.write(record)
     return spec
+
+
+def _find_forward_pid(spec):
+    r = subprocess.run(["pgrep", "-f", "ssh -f -N .*-L %s " % spec], capture_output=True, text=True)
+    pids = [int(x) for x in r.stdout.split() if x.isdigit()]
+    return pids[0] if pids else 0
 
 
 def forward_cancel(site):
     if not os.path.exists(FWD_FILE):
         return
     with open(FWD_FILE) as f:
-        spec = f.read().strip()
-    subprocess.run(["ssh", "-O", "cancel", "-L", spec, site], capture_output=True, text=True)
+        record = f.read().strip()
     os.unlink(FWD_FILE)
+    spec, _, rest = record.partition(" ")
+    if rest.startswith("pid="):
+        pid = int(rest[4:])
+        if pid > 0:
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+        else:
+            subprocess.run(["pkill", "-f", "ssh -f -N .*-L %s " % spec], capture_output=True)
+    else:
+        subprocess.run(["ssh", "-O", "cancel", "-L", spec, site], capture_output=True, text=True)
 
 
 def submit(site, sbatch):
@@ -128,9 +168,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     local_port = a.local_port or a.port
 
-    if not master_open(a.site):
-        print("no ssh control master for '%s': open one in a terminal with `ssh %s` (Duo), then retry"
-              % (a.site, a.site), file=sys.stderr)
+    if not reachable(a.site):
+        print("cannot ssh to '%s' non-interactively: open a control master with `ssh %s` (Duo sites) "
+              "or set up key authentication, then retry" % (a.site, a.site), file=sys.stderr)
         return 2
 
     if a.action == "watch":

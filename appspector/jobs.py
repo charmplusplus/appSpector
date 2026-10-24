@@ -93,6 +93,7 @@ class Job:
     forward: str = ""            # local:node:remote when registered
     script: str = ""
     pid: int = 0                 # local jobs
+    viewer_args: str = ""        # from the program entry
 
     def label(self):
         return "%s %s%s on %s (%d PEs, port %d) %s" % (
@@ -155,7 +156,8 @@ def start(site, spec, log=print):
     L.ssh(site.ssh, "mkdir -p %s/jobs && cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (site.work, remote_script, script))
     job_id = L.submit(site.ssh, remote_script)
     job = Job(id=job_id, site=site.name, program=spec.program or spec.command, args=spec.args, pes=v["pes"],
-              port=v["port"], out=out_tmpl.replace("%j", job_id), submitted=time.time(), script=remote_script)
+              port=v["port"], out=out_tmpl.replace("%j", job_id), submitted=time.time(), script=remote_script,
+              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "")
     record(job)
     log("submitted job %s on %s: %s" % (job_id, site.name, job.out))
     return job
@@ -172,7 +174,8 @@ def _start_local(site, spec, log):
     with open(out, "w") as f:
         proc = subprocess.Popen(command, shell=True, cwd=directory, stdout=f, stderr=subprocess.STDOUT)
     job = Job(id="local-%d" % proc.pid, site=site.name, program=spec.program or spec.command, args=spec.args,
-              pes=v["pes"], port=v["port"], out=out, submitted=time.time(), pid=proc.pid, state="running")
+              pes=v["pes"], port=v["port"], out=out, submitted=time.time(), pid=proc.pid, state="running",
+              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "")
     record(job)
     log("started %s (pid %d): %s" % (job.program, proc.pid, out))
     return job

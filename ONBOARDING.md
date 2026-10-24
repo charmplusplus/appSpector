@@ -175,6 +175,42 @@ or another example such as `examples/charm++/leanmd`:
 `docs/DESIGN.md` describes the contract, the transport and the plans to
 generalize to other schedulers and clouds.
 
+## For students: connecting your exercise program
+
+The particle program from the Charm++ exercises connects as it is. Any
+Charm++ program accepts `++server ++server-port N`; with that, appSpector
+shows your chares' loads per PE with no code changes, and if you did the
+liveViz exercise the image pane shows your picture too. Steps:
+
+1. Build your program against the appSpector Charm++ build, so it has
+   liveViz and the per-object load handler: on Delta `source
+   $WORK/env.sh` and use `$CBUILD/bin/charmc`; on a laptop
+   `charm-wt/<arch>/bin/charmc` after `tests/setup-laptop.sh`. The
+   exercises' Makefiles take `CHARMC=...`.
+2. In the shell: `program /path/to/your/particle 10000 16` (its own
+   arguments after the path), `pes 4`, `run`, `view`. To keep it:
+   `program add particle /path/to/dir | ./particle {args} +pe {pes}
+   ++server ++server-port {port}`.
+3. If your program has a balancer (`-module CommonLBs`, `AtSync`), the
+   viewer's Balance button needs a CCS handler to trigger it; copy the
+   twelve lines of `pfieldBalance` from `apps/pfield/pfield.C`. Your own
+   handler names go in the program entry's third field (`| --balance
+   myBalance`) or on `view -- --balance myBalance`.
+
+Things that trip people up:
+
+- A program that finishes in seconds shows a few frames and then "the
+  job is gone": give it enough steps to watch, or a long step count.
+- The clicks send `pfieldInject`; on a program without that handler the
+  status line says so and nothing else happens.
+- Windows: OpenSSH on Windows has no ssh control master; use WSL for
+  the laptop side.
+- Per-chare loads are the time each chare's entry methods ran in the
+  last second, from the load-balancing database; a chare that never
+  runs is not shown. Watching this while a program misbehaves (one PE
+  busy, the rest idle; a chare that stops showing up) is a cheap
+  debugging aid; `log` in the shell tails the job output.
+
 ## A path for a new contributor
 
 1. Run the demos: `./demo_local.sh` on the laptop (after

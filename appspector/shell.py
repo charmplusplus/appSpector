@@ -105,7 +105,7 @@ class Shell(cmd.Cmd):
     def do_program(self, arg):
         """program NAME [ARGS...]      what to run (a name from 'programs'); the rest is its arguments
 program /path/to/exe [ARGS...] an executable by path, run as ./exe ARGS +pe {pes} ++server ++server-port {port}
-program add NAME DIR | CMD      remember a program in your site file ({args} {pes} {port} placeholders)"""
+program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site file ({args} {pes} {port} placeholders)"""
         words = arg.split(None, 1)
         if not words:
             self.say("program %s %s" % (self.spec.program or self.spec.command, self.spec.args))
@@ -116,8 +116,8 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
             if "|" not in spec or not name:
                 self.say("usage: program add NAME /path/to/dir | ./prog {args} +pe {pes} ++server ++server-port {port}")
                 return
-            d, c = spec.split("|", 1)
-            path = S.add_program(self.site, name, d.strip(), c.strip())
+            parts = [x.strip() for x in spec.split("|")]
+            path = S.add_program(self.site, name, parts[0], parts[1], parts[2] if len(parts) > 2 else "")
             self.say("added %s to %s" % (name, path))
             return
         if "/" in words[0]:
@@ -275,7 +275,10 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
             self.say("attached to " + job.label())
 
     def do_view(self, arg):
-        """view [ID]: open the viewer window on the job (registers the port forward first)."""
+        """view [ID] [-- VIEWER OPTIONS]: open the viewer window on the job (registers the port forward first).
+Options after '--' go to appspector.viewer, e.g. 'view -- --inject myHandler --no-image'; a program's
+entry in the site file can carry them as a third field so they apply every time."""
+        arg, _, extra = arg.partition("--")
         job = self._job(arg)
         if job is None:
             return
@@ -288,7 +291,7 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
         except L.LaunchError as e:
             self.say(str(e))
             return
-        cmdline = [sys.executable, "-m", "appspector.viewer", host, str(port)]
+        cmdline = [sys.executable, "-m", "appspector.viewer", host, str(port)] + shlex.split(job.viewer_args) + shlex.split(extra)
         self.say("viewer on %s:%d (close its window to come back; the job keeps running)" % (host, port))
         p = subprocess.Popen(cmdline)
         self.viewers.append(p)

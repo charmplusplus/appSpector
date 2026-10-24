@@ -23,7 +23,7 @@ writes one) and fetched with ``site fetch``.
     port = 1234
 
     [programs]
-    name = directory | command line     ; {args} {pes} {port} are filled in
+    name = directory | command line [| viewer options]   ; {args} {pes} {port} are filled in
 
 Values may use {work}, {appspector}, {home} and, in commands, {args},
 {pes}, {port}, {procs}, {cores_per_proc}.
@@ -44,6 +44,7 @@ class Program:
     name: str
     directory: str
     command: str          # with {args} {pes} {port} ... placeholders
+    viewer_args: str = "" # extra appspector.viewer options, e.g. --inject myHandler --no-image
 
 
 @dataclass
@@ -118,8 +119,8 @@ def load_site(name_or_path):
         for name, spec in cp["programs"].items():
             if "|" not in spec:
                 raise ValueError("%s: program %s needs 'directory | command'" % (path, name))
-            d, c = spec.split("|", 1)
-            s.programs[name] = Program(name, s.expand(d.strip()), c.strip())
+            parts = [x.strip() for x in spec.split("|")]
+            s.programs[name] = Program(name, s.expand(parts[0]), parts[1], parts[2] if len(parts) > 2 else "")
     return s
 
 
@@ -132,7 +133,7 @@ def save_site_text(name, text):
     return path
 
 
-def add_program(site, name, directory, command):
+def add_program(site, name, directory, command, viewer_args=""):
     """Append a program to the site's file, copying a built-in site file into
     the user directory first so built-ins stay pristine. Returns the path."""
     path = site.path
@@ -143,10 +144,10 @@ def add_program(site, name, directory, command):
     cp.read(path)
     if not cp.has_section("programs"):
         cp.add_section("programs")
-    cp["programs"][name] = "%s | %s" % (directory, command)
+    cp["programs"][name] = "%s | %s" % (directory, command) + (" | " + viewer_args if viewer_args else "")
     with open(path, "w") as f:
         cp.write(f)
-    site.programs[name] = Program(name, site.expand(directory), command)
+    site.programs[name] = Program(name, site.expand(directory), command, viewer_args)
     site.path = path
     return path
 

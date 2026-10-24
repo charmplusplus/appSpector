@@ -84,9 +84,10 @@ class AddProgramTests(unittest.TestCase):
         with open(path, "w") as f:
             f.write(SITE_INI)
         site = S.load_site(path)
-        S.add_program(site, "mine", "{work}/mine", "./mine {args} +pe {pes} ++server ++server-port {port}")
+        S.add_program(site, "mine", "{work}/mine", "./mine {args} +pe {pes} ++server ++server-port {port}", "--inject myInject")
         again = S.load_site(path)
         self.assertEqual(again.programs["mine"].directory, "/work/alloc/me/appspector/mine")
+        self.assertEqual(again.programs["mine"].viewer_args, "--inject myInject")
         d, c, v = J.JobSpec(program="mine", args="-x", pes=2).resolve(again)
         self.assertEqual((d, c), ("/work/alloc/me/appspector/mine", "./mine -x +pe 2 ++server ++server-port 1234"))
         from appspector.shell import Shell

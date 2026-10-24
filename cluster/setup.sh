@@ -8,8 +8,11 @@
 #   SITE=anvil ALLOC=asc050025 bash cluster/setup.sh
 #
 # SITE picks cluster/<site>.env (modules, Slurm defaults); ALLOC is your
-# allocation. Optional: WORK, BRANCH (default appspector-delta; recharm once
-# charm PR #4071 is merged), PARTITION, ACCOUNT, JOBS (16), PORT (1234).
+# allocation. Optional overrides, prefixed so they cannot collide with the
+# cluster's own login environment (Anvil sets $WORK, for instance):
+#   APPSPECTOR_WORK       work directory (default from the env file)
+#   APPSPECTOR_BRANCH     charm branch (default appspector-delta; recharm once PR #4071 is merged)
+#   APPSPECTOR_PARTITION, APPSPECTOR_ACCOUNT, APPSPECTOR_MEM, APPSPECTOR_PORT (1234), APPSPECTOR_JOBS (16)
 # Nothing depends on who runs it: paths come from $USER and these variables.
 # Re-running skips the clone and the core build and rebuilds the rest.
 set -eu
@@ -19,13 +22,13 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 ENVFILE=$REPO/cluster/$SITE.env
 [ -f "$ENVFILE" ] || { echo "no $ENVFILE; known sites: $(ls $REPO/cluster/*.env | xargs -n1 basename | sed 's/.env//' | tr '\n' ' ')"; exit 1; }
 source "$ENVFILE"
-WORK=${WORK:-$WORK_DEFAULT}
-BRANCH=${BRANCH:-appspector-delta}
-PARTITION=${PARTITION:-$PARTITION_DEFAULT}
-ACCOUNT=${ACCOUNT:-$ACCOUNT_DEFAULT}
-JOBS=${JOBS:-16}
-PORT=${PORT:-1234}
-MEM=${MEM:-$MEM_DEFAULT}
+WORK=${APPSPECTOR_WORK:-$WORK_DEFAULT}
+BRANCH=${APPSPECTOR_BRANCH:-appspector-delta}
+PARTITION=${APPSPECTOR_PARTITION:-$PARTITION_DEFAULT}
+ACCOUNT=${APPSPECTOR_ACCOUNT:-$ACCOUNT_DEFAULT}
+JOBS=${APPSPECTOR_JOBS:-16}
+PORT=${APPSPECTOR_PORT:-1234}
+MEM=${APPSPECTOR_MEM-$MEM_DEFAULT}
 step() { echo "== $(date +%H:%M:%S) $*"; }
 
 mkdir -p "$WORK"

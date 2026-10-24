@@ -77,9 +77,11 @@ into `recharm`, then `BRANCH=recharm`), builds it with tracing and
 liveViz, builds the example programs and `apps/pfield`, and writes
 `env.sh`, batch scripts and a site file into the work directory: by
 default `/work/hdd/<alloc>/<you>/appspector` on Delta and
-`/anvil/scratch/<you>/appspector` on Anvil (Anvil's project space has a
-shared file quota; scratch is purged periodically, so rerun the script if
-it vanishes). Override with `WORK=`, `PARTITION=`, `ACCOUNT=`. The last
+`/anvil/projects/x-<account>/<you>/software/appspector` on Anvil (that
+space has a shared file quota; `APPSPECTOR_WORK=/anvil/scratch/<you>/appspector`
+uses scratch instead, which is purged periodically). Override with `APPSPECTOR_WORK=`, `APPSPECTOR_PARTITION=`,
+`APPSPECTOR_ACCOUNT=` (prefixed so they cannot collide with the
+cluster's own variables; Anvil sets `$WORK` itself). The last
 lines of its output are the exact laptop commands to run next.
 
 ## 4. Run a job from the laptop and watch it

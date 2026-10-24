@@ -1,0 +1,31 @@
+mainmodule pfield {
+  extern module liveViz;
+
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Cell cells;
+  readonly int K;            // cells per side
+  readonly double boxSize;   // simulation box is [0, boxSize)^2
+  readonly int moveMode;     // 0 random walk, 1 forcing-function field
+  readonly int workTerms;    // extra per-particle work (field series terms)
+  readonly double deathRate; // per particle per step
+  readonly double birthRate; // relative to the initial count per cell per step
+  readonly int baseCount;    // initial particles per cell
+  readonly double hotAmp;    // hot-spot birth multiplier amplitude
+  readonly double hotPeriod; // seconds for the hot spot to circle the box
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void stepDone(int total);
+    entry [reductiontarget] void lbDone();
+    entry void ccsInject(CkCcsRequestMsg *m);
+    entry void ccsBalance(CkCcsRequestMsg *m);
+  };
+
+  array [2D] Cell {
+    entry Cell();
+    entry void step(int stepNo);
+    entry void inject(const std::vector<double> &xs, const std::vector<double> &ys);
+    entry void doBalance();
+    entry void requestNextFrame(liveVizRequestMsg *m);
+  };
+};

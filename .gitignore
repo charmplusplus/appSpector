@@ -1,0 +1,17 @@
+# charm worktree and builds live beside the repo, not in it
+charm-wt/
+# build products
+apps/pfield/pfield
+apps/pfield/*.o
+apps/pfield/*.decl.h
+apps/pfield/*.def.h
+apps/pfield/charmrun
+__pycache__/
+*.pyc
+*.log
+*.sts
+*.out
+.DS_Store
+prompt_log.md
+ScreenshotLoadBalancingDemo.png
+patches/

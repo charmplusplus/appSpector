@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccsio"
+version = "0.1.0"
+description = "Pure-Python client for CCS, the Converse Client-Server protocol of Charm++ jobs"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0 WITH LLVM-exception"}
+authors = [{name = "Parallel Programming Laboratory, UIUC"}]
+
+[project.optional-dependencies]
+image = ["Pillow"]
+
+[tool.setuptools]
+packages = ["ccsio"]

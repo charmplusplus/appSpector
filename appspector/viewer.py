@@ -12,7 +12,9 @@ interval, stacked from the time each chare ran, every chare in its own
 color (handler "LBObjLoads", any Charm++ program). --pane ep instead
 shows one stacked column per second of utilization by entry method,
 scrolling left (handler "CkPerfSumDetail compressed", needs -tracemode
-utilization). A click in the image pane sends an inject request to the job (handler
+utilization). --pane grid shows every PE (or every process) as a square
+in a square-ish layout, colored from blue (idle) to red (100 percent
+busy) by its utilization over the last interval. A click in the image pane sends an inject request to the job (handler
 "pfieldInject" by default: x, y, sigma as fractions of the image, and a
 count, network order) and the Balance button sends "pfieldBalance"; both
 are no-ops on jobs without those handlers. All CCS traffic runs on worker
@@ -21,6 +23,7 @@ threads; the UI thread only draws.
 
 import argparse
 import collections
+import math
 import queue
 import struct
 import threading
@@ -62,6 +65,16 @@ def color_for_object(key):
         c = "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
         _obj_colors[key] = c
     return c
+
+
+def utilization_color(u):
+    """Blue (idle) to red (busy), mixed in proportion; the middle passes
+    through purple so a half-loaded PE reads as neither."""
+    u = min(1.0, max(0.0, u))
+    r = int(40 + 215 * u)
+    g = int(40 * (1 - abs(2 * u - 1)))
+    b = int(255 - 215 * u)
+    return "#%02x%02x%02x" % (r, g, b)
 
 
 def canvas_size(c):
@@ -135,11 +148,15 @@ class Viewer:
         ttk.Label(controls, text="Load view:").pack(side=tk.LEFT, padx=(6, 2))
         self.view_buttons = {}
         for value, label in (("objects", "by PE, last second, stacked by chare"),
-                             ("ep", "over time, by entry method")):
+                             ("ep", "over time, by entry method"),
+                             ("grid", "PE grid, utilization")):
             b = ttk.Radiobutton(controls, text=label, value=value, variable=self.view,
                                 command=self.redraw_bottom)
             b.pack(side=tk.LEFT, padx=6)
             self.view_buttons[value] = b
+        self.per_process = tk.BooleanVar(value=False)
+        ttk.Checkbutton(controls, text="per process", variable=self.per_process,
+                        command=self.redraw_bottom).pack(side=tk.LEFT, padx=2)
         self.balance_button = ttk.Button(controls, text="Balance", command=self.request_balance)
         self.balance_button.pack(side=tk.RIGHT, padx=6)
         ttk.Label(controls, text="click in the image adds %d particles" % args.inject_count).pack(side=tk.RIGHT, padx=6)
@@ -301,7 +318,7 @@ class Viewer:
             self.columns.append(column_from_sumdetail(sd))
         elif snap is None:
             self.empty_perf += 1
-        for name, ok in (("ep", self.has_ep_stream), ("objects", self.has_objects)):
+        for name, ok in (("ep", self.has_ep_stream), ("objects", self.has_objects), ("grid", self.has_objects)):
             if not ok and str(self.view_buttons[name].cget("state")) != "disabled":
                 self.view_buttons[name].configure(state="disabled")
                 if self.view.get() == name:
@@ -312,7 +329,10 @@ class Viewer:
         if self.view.get() == "ep":
             self.draw_perf()
         elif self.intervals >= 2:          # the first difference has no time span
-            self.draw_objects()
+            if self.view.get() == "grid":
+                self.draw_grid()
+            else:
+                self.draw_objects()
 
     def color_for(self, ep):
         if ep == perf.OTHER_EP:
@@ -366,6 +386,59 @@ class Viewer:
                       text="%d PEs, %d chares, last %.1f s: busiest PE %.0f%%, one color per chare"
                       % (n, sum(len(p.objs) for p in iv.pes.values()),
                          max((p.seconds for p in iv.pes.values()), default=0.0), 100 * busiest))
+
+    def draw_grid(self):
+        """Every PE (or process) as a square, blue when idle, red when fully
+        busy, in a square-ish layout with the gap in the last row."""
+        c = self.perf_canvas
+        c.delete("all")
+        W, H = canvas_size(c)
+        iv = self.interval
+        if iv is None or W < 40 or H < 40:
+            return
+        # utilization per PE over the interval: 1 - idle/seconds when the LB
+        # database gave idle time, else the chares' share
+        util = {}
+        for pe, p in iv.pes.items():
+            if p.seconds <= 0:
+                continue
+            util[pe] = min(1.0, max(0.0, 1.0 - p.idle / p.seconds)) if p.idle > 0 or p.busy == 0 else min(1.0, p.utilization())
+        if not util:
+            return
+        if self.per_process.get() and self.server is not None and self.server.node_sizes:
+            groups, first = {}, 0
+            for proc, size in enumerate(self.server.node_sizes):
+                members = [util[pe] for pe in range(first, first + size) if pe in util]
+                if members:
+                    groups[proc] = sum(members) / len(members)
+                first += size
+            items, kind = sorted(groups.items()), "process"
+        else:
+            items, kind = sorted(util.items()), "PE"
+        n = len(items)
+        cols = int(math.ceil(math.sqrt(n)))
+        rows = int(math.ceil(n / cols))
+        top, bottom, left, right = 6, H - 18, 6, W - 6
+        side = max(3, min((right - left) / cols, (bottom - top) / rows) * 0.92)
+        gap = side * 0.08 / 0.92
+        x_off = left + ((right - left) - cols * (side + gap)) / 2
+        for i, (idx, u) in enumerate(items):
+            r, col = divmod(i, cols)
+            x0 = x_off + col * (side + gap)
+            y0 = top + r * (side + gap)
+            c.create_rectangle(x0, y0, x0 + side, y0 + side, fill=utilization_color(u), outline="#444444")
+            if side >= 26:
+                c.create_text(x0 + side / 2, y0 + side / 2, text="%d\n%.0f%%" % (idx, 100 * u),
+                              font=("", 9 if side < 48 else 11), fill="white" if 0.25 < u < 0.8 else "black",
+                              justify="center")
+            elif side >= 14:
+                c.create_text(x0 + side / 2, y0 + side / 2, text=str(idx), font=("", 7),
+                              fill="white" if 0.25 < u < 0.8 else "black")
+        mean = sum(u for _, u in items) / n
+        c.create_text(left, H - 2, anchor="sw", font=("", 9),
+                      text="%d %ss, last %.1f s: mean utilization %.0f%%, busiest %.0f%%, idlest %.0f%%  (blue idle, red busy)"
+                      % (n, kind, max(p.seconds for p in iv.pes.values()), 100 * mean,
+                         100 * max(u for _, u in items), 100 * min(u for _, u in items)))
 
     def draw_perf(self):
         c = self.perf_canvas
@@ -427,7 +500,7 @@ def main(argv=None):
     ap.add_argument("--size", type=parse_size, default=(600, 400), help="initial image pane size, WxH")
     ap.add_argument("--image-ms", type=int, default=200, help="image poll interval")
     ap.add_argument("--perf-ms", type=int, default=1000, help="utilization poll interval")
-    ap.add_argument("--pane", choices=["objects", "ep"], default="objects",
+    ap.add_argument("--pane", choices=["objects", "ep", "grid"], default="objects",
                     help="initial bottom view: per-PE bars stacked by chare (default) or utilization by entry "
                          "method over time; radio buttons in the window flip between them")
     ap.add_argument("--sts", help="the job's .util.sts file, for entry-method names (ep pane)")

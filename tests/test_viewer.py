@@ -113,6 +113,13 @@ class ObjectsPaneTest(unittest.TestCase):
             self.assertEqual(v.view.get(), "objects")
             v.view.set("objects"); v.redraw_bottom()
             self.assertGreater(len(v.perf_canvas.find_all()), 5)
+            v.view.set("grid"); v.redraw_bottom()
+            items = len(v.perf_canvas.find_all())
+            self.assertGreaterEqual(items, 2 + 1)          # two PE squares (+ labels) + caption
+            v.per_process.set(True); v.redraw_bottom()
+            self.assertLess(len(v.perf_canvas.find_all()), items)   # one process square instead of two
+            self.assertEqual(V.utilization_color(0.0), "#2800ff")
+            self.assertEqual(V.utilization_color(1.0), "#ff0028")
             self.assertNotEqual(V.color_for_object((9, 100)), V.color_for_object((9, 101)))
             v.close()
         finally:

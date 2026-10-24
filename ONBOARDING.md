@@ -175,6 +175,21 @@ or another example such as `examples/charm++/leanmd`:
 `docs/DESIGN.md` describes the contract, the transport and the plans to
 generalize to other schedulers and clouds.
 
+## A path for a new contributor
+
+1. Run the demos: `./demo_local.sh` on the laptop (after
+   `tests/setup-laptop.sh`), then pfield and wave2d on Delta through the
+   shell. Click, balance, flip the views, read `apps/pfield/README.md`
+   and skim `pfield.C` and `appspector/viewer.py` while they run.
+2. Connect a program of your own. A particle code from the Charm++
+   exercises is ideal: build it against the Delta build (`$CBUILD`),
+   `program add` it in the shell, run it, and see it in the viewer with
+   no changes (per-chare loads come free). Then add liveViz for an image
+   and, if you like, a CCS handler for a button, following pfield.
+3. Pick something from the open items below, or whatever the demos made
+   you want to change. The repository is charmplusplus/appSpector;
+   branch, pull request, review.
+
 ## Open items (good first tasks)
 
 - Per-PE view refinements from the old demo: an absolute time axis,

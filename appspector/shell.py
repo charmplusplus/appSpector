@@ -33,7 +33,13 @@ from . import sites as S
 
 class Shell(cmd.Cmd):
     prompt = "appspector> "
-    intro = "appSpector shell. 'help' lists commands; 'site delta' then 'program pfield', 'pes 16', 'run', 'view'."
+    intro = """appSpector: run a Charm++ program on a site and watch it. The sequence is
+  1. site NAME             where to run ('sites' lists them; 'site fetch NAME SSH:PATH' imports one)
+  2. program NAME [ARGS]   what to run ('programs' lists the site's; a /path works; 'program add' remembers yours)
+  3. pes N  [nodes N, ppn N, walltime HH:MM:SS]   how big ('show' displays the result)
+  4. run                   submit; a line appears here when the job is up
+  5. view                  open the viewer window on it (clicks and buttons live there)
+'help' explains any command; 'jobs' and 'attach ID' return to earlier jobs; 'quit' keeps jobs running."""
 
     def __init__(self, site="local"):
         super().__init__()
@@ -86,7 +92,8 @@ class Shell(cmd.Cmd):
         try:
             self.site = S.load_site(words[0])
             self.spec = J.JobSpec()
-            self.say("site %s: scheduler %s, programs: %s" % (self.site.name, self.site.scheduler, ", ".join(sorted(self.site.programs)) or "none"))
+            self.say("site %s (%s): programs %s\n  next: program NAME [ARGS], then pes N, then run"
+                     % (self.site.name, self.site.scheduler, ", ".join(sorted(self.site.programs)) or "none"))
         except (KeyError, ValueError) as e:
             self.say(str(e))
 
@@ -119,7 +126,7 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
             self.spec.directory = os.path.dirname(exe) or "."
             self.spec.command = S.DEFAULT_COMMAND.replace("{exe}", os.path.basename(exe))
             self.spec.args = words[1] if len(words) > 1 else ""
-            self.do_show("")
+            self.summary("pes N, then run")
             return
         if words[0] not in self.site.programs:
             self.say("unknown program %s (known: %s). Use a path, or 'program add NAME DIR | CMD', or 'command DIR | CMD'."
@@ -128,7 +135,7 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
         self.spec.program = words[0]
         self.spec.args = words[1] if len(words) > 1 else ""
         self.spec.directory = self.spec.command = ""
-        self.do_show("")
+        self.summary("pes N (and nodes N, ppn N on a cluster), then run")
 
     def do_command(self, arg):
         """command DIRECTORY | COMMAND LINE: run an arbitrary program ({pes} {port} are filled in)."""
@@ -138,7 +145,7 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
         d, c = arg.split("|", 1)
         self.spec.program = ""
         self.spec.directory, self.spec.command = d.strip(), c.strip()
-        self.do_show("")
+        self.summary("pes N, then run")
 
     def _set_int(self, attr, arg, what):
         try:
@@ -146,7 +153,7 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
         except ValueError:
             self.say("%s needs an integer" % what)
             return
-        self.do_show("")
+        self.summary("run (or 'show' for the full command)")
 
     def do_pes(self, arg):
         """pes N: total PEs."""
@@ -167,10 +174,21 @@ program add NAME DIR | CMD      remember a program in your site file ({args} {pe
     def do_walltime(self, arg):
         """walltime HH:MM:SS."""
         self.spec.walltime = arg.strip()
-        self.do_show("")
+        self.summary("run")
+
+    def summary(self, hint=""):
+        try:
+            directory, command, v = self.spec.resolve(self.site)
+        except KeyError as e:
+            self.say("spec incomplete: %s" % e)
+            return
+        what = self.spec.program or command.split()[0]
+        self.say("spec: %s%s on %s, %s PEs, %d node(s) x %d proc(s), port %d%s" % (
+            what, " " + self.spec.args if self.spec.args else "", self.site.name, v["pes"], v["nodes"],
+            v["procs"] // v["nodes"], v["port"], ("   next: " + hint) if hint else ""))
 
     def do_show(self, arg):
-        """show: the job spec with the site's defaults filled in."""
+        """show: the job spec with the site's defaults filled in, and the command it will run."""
         try:
             directory, command, v = self.spec.resolve(self.site)
         except KeyError as e:

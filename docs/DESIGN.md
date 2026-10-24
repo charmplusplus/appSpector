@@ -94,3 +94,45 @@ The contract above is all a program needs. In practice:
   CCS endpoint and connect; the front end would call `appspector.launch`
   as a library and use `ccsio.Server` for its own request-reply traffic,
   with the viewer attached to the same job for the image and loads.
+
+## Step-by-step plan: the laptop drives everything (2026-10-23)
+
+Today the job's shape is baked into batch scripts that `setup-delta.sh`
+writes (2 processes x 2 PEs on one node, `+pe 4`, which is why the Delta
+demo shows four PEs), and the viewer is opened by the launcher after the
+job is up. The direction Kale set: appSpector on the laptop starts first
+and the user says, in it, what to run and how big. Steps, each useful on
+its own:
+
+1. **Job spec instead of batch files.** `appspector.launch run` takes the
+   program, its arguments, the PE count and the node and process layout
+   (`--program pfield --args "-k 16 -n 400" --pes 16 --nodes 1
+   --procs-per-node 2`), fills a per-site batch template (account,
+   partition, srun flags, environment file) and submits it over ssh; the
+   setup script only installs the template and the environment. The
+   same spec runs locally (`+pe N`, no Slurm). The generated script is
+   kept next to the job output for the record.
+2. **A command interpreter.** `python3 -m appspector` opens a small shell
+   (Python's `cmd` module): `site delta`, `program pfield -k 16`, `pes
+   16`, `run`, `attach 23143979`, `inject 0.3 0.4 2000`, `balance`,
+   `stop`, `view`. Every command is also a one-line non-interactive
+   invocation, so scripts and the GUI call the same functions. This is
+   the cheap, scriptable form of the front end and the one to build
+   first.
+3. **A launch pane in the viewer window.** The same fields as a form:
+   site, program (from a list the site reports, plus a free text field),
+   arguments, PEs, nodes, a Run button, the job state and a log tail
+   while it queues, then the panes fill in when the job is up. The
+   viewer starts without a job and can hold several.
+4. **Site descriptions as data.** A small file per installation:
+   scheduler (Slurm, PBS, none), submit and poll commands, the batch
+   template, how output files are named, how the transport is set up
+   (ssh forward through the login node, or a relay). Delta and the
+   laptop are the first two entries; a workstation over plain ssh is the
+   third; PBS and a cloud instance follow.
+5. **Transport alternatives.** The relay process for sites where the login
+   node cannot reach a compute node and for clouds, and `++server-auth`
+   keys generated per run.
+
+Steps 1 and 2 remove the need for anyone to edit batch scripts; 3 gives
+the demo its intended shape; 4 and 5 are the generalization proper.

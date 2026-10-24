@@ -59,7 +59,12 @@ class JobSpec:
         nodes = self.nodes or site.default_nodes
         ppn = self.procs_per_node or site.default_procs_per_node
         procs = nodes * ppn
-        cores_per_proc = max(1, site.cores_per_node // max(1, ppn)) if site.scheduler != "local" else 1
+        # ask for the cores the PEs will use (PEs per process), not the whole
+        # node share: on shared partitions a whole-node request can queue for
+        # hours while a small one starts at once
+        import math
+        pes_per_proc = max(1, math.ceil(pes / max(1, procs)))
+        cores_per_proc = min(max(1, site.cores_per_node // max(1, ppn)), pes_per_proc) if site.scheduler != "local" else 1
         port = self.port or site.port
         if self.command:
             directory, command = self.directory or ".", self.command
@@ -228,6 +233,8 @@ def connect(site, job, local_port=None):
     case the next free port above it is used."""
     if site.scheduler == "local":
         return "127.0.0.1", job.port
+    if not job.node:
+        raise L.LaunchError("job %s is %s and has no node yet; nothing to connect to" % (job.id, job.state))
     local_port = local_port or job.port
     while not _port_free(local_port) and local_port < job.port + 100:
         local_port += 1

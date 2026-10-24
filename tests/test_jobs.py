@@ -54,10 +54,10 @@ class SiteTests(unittest.TestCase):
     def test_resolve_defaults_and_overrides(self):
         d, c, v = J.JobSpec(program="pfield").resolve(self.site)
         self.assertEqual(c, "./pfield  +pe 4 ++server ++server-port 1234 +balancer GreedyRefineLB")
-        self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (1, 2, 64))
+        self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (1, 2, 2))      # 4 PEs over 2 procs
         d, c, v = J.JobSpec(program="pfield", args="-k 16 -n 400", pes=32, nodes=2, procs_per_node=4, port=2000).resolve(self.site)
         self.assertEqual(c, "./pfield -k 16 -n 400 +pe 32 ++server ++server-port 2000 +balancer GreedyRefineLB")
-        self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (2, 8, 32))
+        self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (2, 8, 4))      # 32 PEs over 8 procs
         with self.assertRaises(KeyError):
             J.JobSpec(program="nope").resolve(self.site)
         d, c, v = J.JobSpec(directory="/x", command="./mine +pe {pes} ++server ++server-port {port}", pes=3).resolve(self.site)
@@ -69,11 +69,11 @@ class SiteTests(unittest.TestCase):
         self.assertIn("#SBATCH -p interactive", script)
         self.assertIn("#SBATCH -N 2", script)
         self.assertIn("#SBATCH --ntasks=4", script)
-        self.assertIn("#SBATCH --cpus-per-task=64", script)
+        self.assertIn("#SBATCH --cpus-per-task=4", script)      # 16 PEs over 4 procs
         self.assertIn("#SBATCH -o /work/alloc/me/appspector/jobs/pfield-%j.out", script)
         self.assertIn("source /work/alloc/me/appspector/env.sh", script)
         self.assertIn("cd /work/alloc/me/appSpector/apps/pfield", script)
-        self.assertIn("stdbuf -o0 -e0 srun --mpi=pmix -n 4 -c 64 ./pfield  +pe 16 ++server ++server-port 1234 +balancer GreedyRefineLB", script)
+        self.assertIn("stdbuf -o0 -e0 srun --mpi=pmix -n 4 -c 4 ./pfield  +pe 16 ++server ++server-port 1234 +balancer GreedyRefineLB", script)
         self.assertEqual(out, "/work/alloc/me/appspector/jobs/pfield-%j.out")
         # a site without a memory request leaves the line out
         site2 = S.load_site(self.path)

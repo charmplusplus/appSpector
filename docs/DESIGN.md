@@ -140,3 +140,13 @@ its own:
 
 Steps 1 and 2 remove the need for anyone to edit batch scripts; 3 gives
 the demo its intended shape; 4 and 5 are the generalization proper.
+
+Status 2026-10-23: steps 1 and 2 are in (`appspector/sites.py`,
+`jobs.py`, `shell.py`); step 4 is half there, since sites are already INI
+files with a scheduler field, only `slurm` and `local` are implemented.
+The job record (`~/.appspector/jobs.json`) is the seed of the long-term
+idea of starting a long ChaNGa or NAMD run, leaving, and re-attaching
+from the laptop or another machine later: the record holds the site, job
+id, node and port, and `attach`/`view` rebuild the connection; sharing
+it between machines (or a phone) means moving that record to a small
+service, which is step 6 when it comes.

@@ -94,8 +94,39 @@ sbatch_file ccs    aspec-ccs  "$WORK/charm/examples/converse/ccstest" "./server 
 sbatch_file wave2d aspec-wave "$WORK/charm/examples/charm++/wave2d"   "./wave2d-demo +pe 4 ++server ++server-port $PORT"
 sbatch_file pfield aspec-pf   "$REPO/apps/pfield"                      "./pfield +pe 4 ++server ++server-port $PORT +balancer GreedyRefineLB"
 
+step "site description for the laptop shell"
+cat > "$WORK/site.ini" <<EOS
+# appSpector site file for Delta, written by delta/setup-delta.sh for $USER.
+# On the laptop: python3 -m appspector, then  site fetch delta delta:$WORK/site.ini
+[site]
+scheduler = slurm
+ssh = delta
+work = $WORK
+appspector = $REPO
+env = {work}/env.sh
+account = $ACCOUNT
+partition = $PARTITION
+cores_per_node = 128
+default_nodes = 1
+default_procs_per_node = 2
+default_pes = 4
+walltime = 00:30:00
+mem = 16g
+launcher = stdbuf -o0 -e0 srun --mpi=pmix -n {procs} -c {cores_per_proc}
+port = $PORT
+
+[programs]
+pfield = {appspector}/apps/pfield | ./pfield {args} +pe {pes} ++server ++server-port {port} +balancer GreedyRefineLB
+wave2d = {work}/charm/examples/charm++/wave2d | ./wave2d-demo {args} +pe {pes} ++server ++server-port {port}
+ccstest = {work}/charm/examples/converse/ccstest | ./server {args} +pe {pes} ++server ++server-port {port}
+EOS
+
 step "done"
 echo "work dir:  $WORK"
 echo "batch:     $WORK/{ccs,wave2d,pfield}.sbatch  (account $ACCOUNT, partition $PARTITION)"
-echo "from your laptop (ssh master to Delta open):"
+echo "site file: $WORK/site.ini"
+echo "from your laptop (ssh master to Delta open), either:"
 echo "  python3 -m appspector.launch run --site delta --sbatch $WORK/pfield.sbatch --port $PORT"
+echo "or the shell:  python3 -m appspector"
+echo "  site fetch delta delta:$WORK/site.ini     (once)"
+echo "  site delta / program pfield -k 16 / pes 16 / run / view"

@@ -99,7 +99,22 @@ on 2026-10-23 three clicks took one PE to 91 percent while the others
 waited at 42 to 50, and Balance moved 5 chares. `./demo_local.sh` runs it
 by default.
 
-## appspector.launch: the launcher
+## python3 -m appspector: the shell
+
+The front door since 2026-10-23: `site delta`, `program pfield -k 16`,
+`pes 16`, `run`, then `view` when the shell reports the job up. Sites are
+INI files (`appspector/sites/local.ini` built in, cluster files in
+`~/.appspector/sites/`, written by the cluster's setup script and fetched
+with `site fetch`); a job spec (program, arguments, PEs, nodes, processes
+per node, wall time) is rendered into a batch script from the site's
+template and submitted over ssh, or started as a local process. Jobs are
+recorded in `~/.appspector/jobs.json` for `attach`, `view`, `status`,
+`stop` from any later shell. One-shot forms: `python3 -m appspector run
+--site delta --program pfield --pes 16 ...`, `view ID`, `status ID`,
+`stop ID`, `jobs`, `sites`, `script`. Interaction with the running
+program stays in the viewer.
+
+## appspector.launch: the launcher primitives
 
 `python -m appspector.launch run --site delta --sbatch /remote/wave2d.sbatch`
 submits the script over the site's open ssh control master, polls the job

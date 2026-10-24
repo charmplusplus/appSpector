@@ -67,38 +67,52 @@ laptop command to run next.
 
 ## 4. Run a job from the laptop and watch it
 
-With the ssh master open, from the laptop checkout:
+The shell is the front door. With the ssh master open, from the laptop
+checkout:
 
 ```
-python3 -m appspector.launch run --site delta --sbatch /work/hdd/<alloc>/<you>/appspector/pfield.sbatch
+python3 -m appspector
+appspector> site fetch delta delta:/work/hdd/<alloc>/<you>/appspector/site.ini   # once; the setup script printed this line
+appspector> site delta
+appspector> program pfield -k 16 -n 400        # a program from the site, then its own arguments
+appspector> pes 16                              # and, for clusters: nodes N, ppn N, walltime HH:MM:SS
+appspector> run                                 # generates the batch script, submits, returns at once
 ```
 
-Two applications are set up: `pfield.sbatch` runs appSpector's own demo
-(`apps/pfield`, read its README first: cells, pinned particles, click to
-inject, Balance), and `wave2d.sbatch` runs Charm++'s wave2d example
-linked with the utilization trace, which also feeds the "over time, by
-entry method" view. Both are good code to read: wave2d for a classic
+`run` prints the job id and the shell keeps working; a line appears when
+the job's CCS server is up (queue waits on cpu-interactive have ranged
+from seconds to 12 hours). Then:
+
+```
+appspector> view          # opens the viewer window on the job (forward registered for you)
+appspector> status        # or: jobs, log, stop
+appspector> quit          # the job keeps running; 'stop' cancels it
+```
+
+Every job is recorded in `~/.appspector/jobs.json`, so a later shell can
+`attach <id>` and `view` it again. The same commands work in one shot:
+`python3 -m appspector run --site delta --program pfield --pes 16 --args
+"-k 16"` submits, waits, and opens the viewer; `python3 -m appspector
+view <id>`, `status <id>`, `stop <id>`, `jobs`, `sites`, and `script`
+(prints the batch script a spec would submit without submitting).
+
+Two programs are set up by `setup-delta.sh`: `pfield`, appSpector's own
+demo (`apps/pfield`, read its README first: cells, pinned particles,
+click to inject, Balance), and `wave2d`, Charm++'s wave2d example linked
+with the utilization trace, which also feeds the "over time, by entry
+method" view. Both are good code to read: wave2d for a classic
 stencil-style chare array with liveViz, pfield for the CCS handlers and
-AtSync load balancing.
-
-It submits the job, polls until the job prints its CCS address (queue
-waits on cpu-interactive have ranged from 12 minutes to 12 hours),
-registers a port forward inside the ssh master, and opens the viewer.
-Closing the viewer cancels the forward and the job. Useful variants:
-
-- `--check --keep`: no window; print the PE layout and leave the job
-  running. Then `ssh -O forward -L 1234:<node>:1234 delta` and
-  `python3 tests/remote_check.py 127.0.0.1 1234 out.png` exercises every
-  handler headlessly, and `python3 -m appspector.launch stop --site delta
-  --job <id>` cleans up.
-- `attach --job <id> --out <file>`: join a job that is already queued or
-  running. `watch` tails the newest job output; `stop` cancels.
+AtSync load balancing. `command DIR | CMD` runs anything else.
 
 In the viewer: a click in the image drops a Gaussian blob of particles
 there (pfield only); the Balance button runs one load-balancing step;
 the radio buttons flip the bottom pane between "by PE, last second,
-stacked by chare" and "over time, by entry method" (the latter needs a
-job linked with `-tracemode utilization`, such as the wave2d demo).
+stacked by chare" and "over time, by entry method".
+
+The older `appspector.launch` still works for a batch script you wrote
+yourself: `python3 -m appspector.launch run --site delta --sbatch
+/path/file.sbatch`, and `attach --job <id> --out <file>` for a job it
+did not start.
 
 ## 5. Local demo on the laptop (optional)
 
@@ -115,8 +129,10 @@ client for poking at any job by hand.
 | Path | What |
 |---|---|
 | `ccsio/` | CCS client: `protocol.py` wire format and auth, `client.py` Server, `liveviz.py`, `perf.py` utilization stream, `objload.py` per-object loads |
+| `appspector/shell.py`, `__main__.py` | the command shell and its one-shot forms |
+| `appspector/sites.py`, `jobs.py` | site descriptions, job specs, batch generation, records, connections |
 | `appspector/viewer.py` | the tkinter viewer |
-| `appspector/launch.py` | the launcher (ssh, sbatch, forward) |
+| `appspector/launch.py` | the ssh, sbatch and port-forward primitives (also a standalone launcher for hand-written batch scripts) |
 | `apps/pfield/` | the demo application (its README explains the model and the CCS handlers) |
 | `tests/` | unit tests, fake CCS server, integration scripts, `remote_check.py`, setup scripts |
 | `delta/setup-delta.sh` | the Delta build |
@@ -142,13 +158,15 @@ or another example such as `examples/charm++/leanmd`:
    show how); without it, run the viewer with `--no-image`. For the
    Balance button and clicks, register CCS handlers as pfield does and
    pass their names with `--balance` and `--inject`.
-2. On Delta, copy a batch script and change the program and directory:
-   `cp $WORK/pfield.sbatch $WORK/mine.sbatch`, edit the `cd` and the
-   `srun ... ./program +pe 4 ++server ++server-port 1234` line, then
-   `python3 -m appspector.launch run --site delta --sbatch $WORK/mine.sbatch`.
-3. On the laptop, start it yourself with `++server ++server-port 1234`
-   and run `python3 -m appspector.viewer 127.0.0.1 1234`, or
-   `./demo_local.sh /path/to/program` which does both.
+2. Add it to the site file (`~/.appspector/sites/delta.ini`, section
+   `[programs]`): `mine = /path/to/dir | ./mine {args} +pe {pes} ++server
+   ++server-port {port}`. Then `program mine`, `pes 32`, `run` in the
+   shell. Or, without editing anything, `command /path/to/dir | ./mine
+   +pe {pes} ++server ++server-port {port}`.
+3. On the laptop the same works with `site local` (its programs are in
+   `appspector/sites/local.ini`), or start the program yourself with
+   `++server ++server-port 1234` and run `python3 -m appspector.viewer
+   127.0.0.1 1234`; `./demo_local.sh /path/to/program` does both.
 
 `docs/DESIGN.md` describes the contract, the transport and the plans to
 generalize to other schedulers and clouds.

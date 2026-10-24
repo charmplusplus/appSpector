@@ -26,11 +26,13 @@ cd appSpector
 python3 -m unittest discover -s tests        # 29 tests against a fake CCS server, no Charm++ needed
 ```
 
-## 2. Delta: ssh control master
+## 2. Reaching a cluster from the laptop
 
-Delta needs a Duo push on every new connection, so everything runs over
-one ssh connection that you open once. Add to `~/.ssh/config` on the
-laptop, with your NCSA username:
+appSpector talks to a cluster over ssh with no prompts, so the alias
+must work non-interactively.
+
+**Delta (Duo on every login):** use an ssh control master that you open
+once. Add to `~/.ssh/config` on the laptop, with your NCSA username:
 
 ```
 Host delta
@@ -42,28 +44,43 @@ Host delta
 ```
 
 Then, in a terminal, `ssh delta` and answer Duo. Leave that window; every
-later `ssh delta ...` reuses the connection without a prompt. `ssh -O check
-delta` tells you whether the master is up; if Delta drops it (it did,
-about two hours in, twice), just `ssh delta` again.
+later `ssh delta ...` reuses the connection. `ssh -O check delta` tells
+you whether the master is up; if Delta drops it (it did, about two hours
+in, twice), just `ssh delta` again.
 
-## 3. Delta: build the server side (once, about 10 minutes)
+**Anvil (ssh key, no Duo):** an alias with your key is enough:
 
-On a Delta login node, from a checkout of this repository:
+```
+Host anvil
+    HostName anvil.rcac.purdue.edu
+    User <your-anvil-username>
+    IdentityFile ~/.ssh/<your key>
+```
+
+`ssh anvil true` must return without a prompt. Port forwards are then
+background ssh processes that appSpector starts and stops itself.
+
+## 3. Build the server side on the cluster (once, about 10 minutes)
+
+On a login node, from a checkout of this repository:
 
 ```
 git clone https://github.com/charmplusplus/appSpector.git
 cd appSpector
-ALLOC=<your allocation> bash delta/setup-delta.sh
+SITE=delta ALLOC=<allocation>  bash cluster/setup.sh      # Delta: ALLOC is the X in X-delta-cpu
+SITE=anvil ALLOC=<account>     bash cluster/setup.sh      # Anvil: the Slurm account, e.g. asc050025
 ```
 
-This clones Charm++ (branch `appspector-delta` until PR #4071 is merged
+`cluster/<site>.env` holds each cluster's modules and Slurm defaults; the
+script clones Charm++ (branch `appspector-delta` until PR #4071 is merged
 into `recharm`, then `BRANCH=recharm`), builds it with tracing and
 liveViz, builds the example programs and `apps/pfield`, and writes
-`env.sh` and three batch scripts into the work directory, by default
-`/work/hdd/<alloc>/<you>/appspector` (override with `WORK=`). The batch
-scripts use partition `cpu-interactive` and account `<alloc>-delta-cpu`
-(`PARTITION=`, `ACCOUNT=`). The last lines of its output are the exact
-laptop command to run next.
+`env.sh`, batch scripts and a site file into the work directory: by
+default `/work/hdd/<alloc>/<you>/appspector` on Delta and
+`/anvil/scratch/<you>/appspector` on Anvil (Anvil's project space has a
+shared file quota; scratch is purged periodically, so rerun the script if
+it vanishes). Override with `WORK=`, `PARTITION=`, `ACCOUNT=`. The last
+lines of its output are the exact laptop commands to run next.
 
 ## 4. Run a job from the laptop and watch it
 
@@ -72,7 +89,7 @@ checkout:
 
 ```
 python3 -m appspector
-appspector> site fetch delta delta:/work/hdd/<alloc>/<you>/appspector/site.ini   # once; the setup script printed this line
+appspector> site fetch delta delta:/work/hdd/<alloc>/<you>/appspector/site.ini   # once per cluster; the setup script printed this line
 appspector> site delta
 appspector> program pfield -k 16 -n 400        # a program from the site, then its own arguments
 appspector> pes 16                              # and, for clusters: nodes N, ppn N, walltime HH:MM:SS
@@ -135,7 +152,7 @@ client for poking at any job by hand.
 | `appspector/launch.py` | the ssh, sbatch and port-forward primitives (also a standalone launcher for hand-written batch scripts) |
 | `apps/pfield/` | the demo application (its README explains the model and the CCS handlers) |
 | `tests/` | unit tests, fake CCS server, integration scripts, `remote_check.py`, setup scripts |
-| `delta/setup-delta.sh` | the Delta build |
+| `cluster/setup.sh`, `cluster/*.env` | the cluster build (Delta, Anvil; add a cluster by adding an env file) |
 | `README.md`, `INITIAL-THOUGHTS.md` | status and history, design notes |
 
 Charm++ side: the handlers the viewer relies on are `lvConfig`/`lvImage`

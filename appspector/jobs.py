@@ -210,11 +210,26 @@ def wait_until_up(site, job, wait_secs=21600, log=print):
     return job
 
 
+def _port_free(port):
+    import socket
+    with socket.socket() as sk:
+        try:
+            sk.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
 def connect(site, job, local_port=None):
-    """Make the job's CCS port reachable; returns (host, port) for ccsio."""
+    """Make the job's CCS port reachable; returns (host, port) for ccsio.
+    The forward's local port is the job's port unless something on this
+    machine already listens there (a local job, another forward), in which
+    case the next free port above it is used."""
     if site.scheduler == "local":
         return "127.0.0.1", job.port
     local_port = local_port or job.port
+    while not _port_free(local_port) and local_port < job.port + 100:
+        local_port += 1
     spec = L.forward_add(site.ssh, local_port, job.node, job.port)
     job.forward = spec
     record(job)

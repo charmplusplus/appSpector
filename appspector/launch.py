@@ -144,7 +144,11 @@ def wait_for_server(site, job, out_path, wait_secs, log=print):
         except ValueError:
             pass
         if not state or state.split()[0] in ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"):
-            raise LaunchError("job %s ended before the server came up; output:\n%s" % (job, body[-2000:]))
+            # show the lines that matter, not the PMIx shared-memory noise every rank prints
+            lines = [ln for ln in body.splitlines() if ln.strip() and "PMIX ERROR" not in ln]
+            raise LaunchError("job %s ended before the server came up (%s). Its output:\n  %s"
+                              % (job, state.split()[0] if state else "no longer queued",
+                                 "\n  ".join(lines[-12:]) or "(empty)"))
         log("  %4ds  %s" % (time.time() - t0, state))
         time.sleep(10)
     raise LaunchError("timed out after %d s waiting for the server line" % wait_secs)

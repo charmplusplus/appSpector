@@ -179,19 +179,20 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
     def summary(self, hint=""):
         try:
             directory, command, v = self.spec.resolve(self.site)
-        except KeyError as e:
+        except (KeyError, ValueError) as e:
             self.say("spec incomplete: %s" % e)
             return
         what = self.spec.program or command.split()[0]
-        self.say("spec: %s%s on %s, %s PEs, %d node(s) x %d proc(s), port %d%s" % (
-            what, " " + self.spec.args if self.spec.args else "", self.site.name, v["pes"], v["nodes"],
-            v["procs"] // v["nodes"], v["port"], ("   next: " + hint) if hint else ""))
+        self.say("spec: %s%s on %s: %s PEs over %d process(es) (%d node(s) x %d), %d PE(s) per process, port %d%s" % (
+            what, " " + self.spec.args if self.spec.args else "", self.site.name, v["pes"], v["procs"], v["nodes"],
+            v["procs"] // v["nodes"], v["cores_per_proc"] if self.site.scheduler != "local" else max(1, v["pes"] // v["procs"]),
+            v["port"], ("   next: " + hint) if hint else ""))
 
     def do_show(self, arg):
         """show: the job spec with the site's defaults filled in, and the command it will run."""
         try:
             directory, command, v = self.spec.resolve(self.site)
-        except KeyError as e:
+        except (KeyError, ValueError) as e:
             self.say("spec incomplete: %s" % e)
             return
         self.say("site %s: %s PEs, %d node(s) x %d proc(s), port %d, walltime %s\n  cd %s\n  %s"
@@ -212,7 +213,7 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
         """run: submit or start the job; a background wait reports when its CCS server is up."""
         try:
             job = J.start(self.site, self.spec, log=self.say)
-        except (L.LaunchError, KeyError, OSError) as e:
+        except (L.LaunchError, KeyError, ValueError, OSError) as e:
             self.say("run failed: %s" % e)
             return
         self.current = job
@@ -360,7 +361,7 @@ def one_shot(argv):
             sh.do_view("")
             for p in sh.viewers:
                 p.wait()
-    except (L.LaunchError, KeyError) as e:
+    except (L.LaunchError, KeyError, ValueError) as e:
         print("appspector: %s" % e, file=sys.stderr)
         return 1
     return 0

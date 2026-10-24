@@ -60,6 +60,8 @@ class SiteTests(unittest.TestCase):
         self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (2, 8, 4))      # 32 PEs over 8 procs
         with self.assertRaises(KeyError):
             J.JobSpec(program="nope").resolve(self.site)
+        with self.assertRaises(ValueError):            # 4 PEs over 12 processes
+            J.JobSpec(program="pfield", pes=4, nodes=4, procs_per_node=3).resolve(self.site)
         d, c, v = J.JobSpec(directory="/x", command="./mine +pe {pes} ++server ++server-port {port}", pes=3).resolve(self.site)
         self.assertEqual((d, c), ("/x", "./mine +pe 3 ++server ++server-port 1234"))
 

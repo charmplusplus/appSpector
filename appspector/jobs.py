@@ -63,6 +63,15 @@ class JobSpec:
         # node share: on shared partitions a whole-node request can queue for
         # hours while a small one starts at once
         import math
+        if pes < procs:
+            raise ValueError("%d PEs over %d processes (%d node(s) x %d per node): every process needs at "
+                             "least one PE, so raise 'pes' to %d or more, or lower 'nodes'/'ppn'"
+                             % (pes, procs, nodes, ppn, procs))
+        if pes % procs:
+            # Charm++ splits the PEs over the processes; an uneven split works
+            # but is rarely what was meant
+            import warnings
+            warnings.warn("%d PEs do not divide evenly over %d processes" % (pes, procs))
         pes_per_proc = max(1, math.ceil(pes / max(1, procs)))
         cores_per_proc = min(max(1, site.cores_per_node // max(1, ppn)), pes_per_proc) if site.scheduler != "local" else 1
         port = self.port or site.port

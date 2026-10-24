@@ -5,7 +5,9 @@ the application's own liveViz image on top, the load on every PE below,
 one bar per PE stacked by chare. New here? Read ONBOARDING.md: it has the
 setup for a laptop and for NCSA Delta with no personal paths baked in
 (`delta/setup-delta.sh`, `tests/setup-laptop.sh`). Background and plan:
-INITIAL-THOUGHTS.md.
+INITIAL-THOUGHTS.md; the design and the long-term direction (other
+schedulers, relays for sites and clouds, ccsio as its own package):
+docs/DESIGN.md.
 
 ## ccsio: a pure-Python CCS client
 

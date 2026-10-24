@@ -8,6 +8,7 @@
 #      mol2d         Molecular2D particles, 25 patches + 125 computes
 #      pfield        appSpector's own demo: particles in cells under a
 #                    forcing field, click to inject, Balance button (default)
+#      /path/to/bin  any other Charm++ program built against the same charm
 APP=${1:-pfield}
 PES=${2:-4}
 PORT=${3:-1234}
@@ -18,7 +19,8 @@ case "$APP" in
   wave2d-small) DIR=$EX/wave2d;      BIN=wave2d-small ;;
   mol2d)        DIR=$EX/Molecular2D; BIN=mol2d ;;
   pfield)       DIR=$ROOT/apps/pfield; BIN=pfield; EXTRA="+balancer GreedyRefineLB" ;;
-  *) echo "unknown app '$APP' (wave2d, wave2d-small, mol2d)"; exit 1 ;;
+  */*) [ -x "$APP" ] || { echo "no executable $APP"; exit 1; }; DIR=$(cd "$(dirname "$APP")" && pwd); BIN=$(basename "$APP") ;;
+  *) echo "unknown app '$APP' (wave2d, wave2d-small, mol2d, pfield, or a path to a program)"; exit 1 ;;
 esac
 [ -x "$DIR/$BIN" ] || { echo "no $DIR/$BIN; run tests/build_reconverse_examples.sh (or make in apps/pfield) first"; exit 1; }
 cd "$DIR" || exit 1

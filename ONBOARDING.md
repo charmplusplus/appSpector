@@ -128,6 +128,31 @@ Charm++ side: the handlers the viewer relies on are `lvConfig`/`lvImage`
 (LBManager, PR #4071). The CCS protocol itself is documented at the top
 of `ccsio/protocol.py`.
 
+## Connecting your own program
+
+appSpector does not know what the application is; any Charm++ program
+that runs with `++server ++server-port N` works. To watch one of yours,
+or another example such as `examples/charm++/leanmd`:
+
+1. Build it against the Charm++ build `setup-delta.sh` (or
+   `setup-laptop.sh`) made, so it has liveViz and the `LBObjLoads`
+   handler: `CHARM_HOME=$CBUILD`, or `$CBUILD/bin/charmc` directly.
+   Per-PE loads by chare then work with no code changes. For the image,
+   link `-module liveViz` and implement its callback (pfield and wave2d
+   show how); without it, run the viewer with `--no-image`. For the
+   Balance button and clicks, register CCS handlers as pfield does and
+   pass their names with `--balance` and `--inject`.
+2. On Delta, copy a batch script and change the program and directory:
+   `cp $WORK/pfield.sbatch $WORK/mine.sbatch`, edit the `cd` and the
+   `srun ... ./program +pe 4 ++server ++server-port 1234` line, then
+   `python3 -m appspector.launch run --site delta --sbatch $WORK/mine.sbatch`.
+3. On the laptop, start it yourself with `++server ++server-port 1234`
+   and run `python3 -m appspector.viewer 127.0.0.1 1234`, or
+   `./demo_local.sh /path/to/program` which does both.
+
+`docs/DESIGN.md` describes the contract, the transport and the plans to
+generalize to other schedulers and clouds.
+
 ## Open items (good first tasks)
 
 - Per-PE view refinements from the old demo: an absolute time axis,

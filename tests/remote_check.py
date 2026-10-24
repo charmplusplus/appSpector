@@ -29,24 +29,29 @@ t0 = time.time()
 for _ in range(5):
     liveviz.get_image(s, 400, 400, config=cfg)
 print("5 x 400x400: %.0f ms each" % (200 * (time.time() - t0)))
-names = perf.fetch_sts(s)
-print("entry names over CCS:", len(names))
-sd = None
-for _ in range(6):
-    sd = perf.fetch(s)
-    if sd:
-        break
-    time.sleep(1)
-print("utilization stream:", "none" if sd is None else "%d bins, %d procs, top %s" % (
-    sd.num_bins, sd.num_procs,
-    [(perf.ep_name(names, ep), round(u)) for ep, u in sorted(sd.by_ep().items(), key=lambda kv: -kv[1])[:3]]))
+# a job without a handler answers with 0 bytes (classic) or closes the
+# connection (reconverse); both mean "not there"
+try:
+    names = perf.fetch_sts(s)
+    print("entry names over CCS:", len(names))
+    sd = None
+    for _ in range(6):
+        sd = perf.fetch(s)
+        if sd:
+            break
+        time.sleep(1)
+    print("utilization stream:", "none" if sd is None else "%d bins, %d procs, top %s" % (
+        sd.num_bins, sd.num_procs,
+        [(perf.ep_name(names, ep), round(u)) for ep, u in sorted(sd.by_ep().items(), key=lambda kv: -kv[1])[:3]]))
+except (ValueError, ccsio.CcsError):
+    print("utilization stream: not in this program (no -tracemode utilization)")
 try:
     a = objload.fetch(s)
     time.sleep(1)
     d = objload.diff(a, objload.fetch(s))
     print("LBObjLoads: %d PEs, %d objects; utilization per PE %s" % (
         a.num_pes, a.num_objs, {pe: "%.0f%%" % (100 * p.utilization()) for pe, p in sorted(d.pes.items())}))
-except ValueError as e:
+except (ValueError, ccsio.CcsError) as e:
     print("LBObjLoads: not in this build:", e)
 import argparse
 import tkinter as tk

@@ -77,6 +77,26 @@ class SiteTests(unittest.TestCase):
         self.assertEqual(out, "/work/alloc/me/appspector/jobs/pfield-%j.out")
 
 
+class AddProgramTests(unittest.TestCase):
+    def test_add_program_and_path(self):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "cluster.ini")
+        with open(path, "w") as f:
+            f.write(SITE_INI)
+        site = S.load_site(path)
+        S.add_program(site, "mine", "{work}/mine", "./mine {args} +pe {pes} ++server ++server-port {port}")
+        again = S.load_site(path)
+        self.assertEqual(again.programs["mine"].directory, "/work/alloc/me/appspector/mine")
+        d, c, v = J.JobSpec(program="mine", args="-x", pes=2).resolve(again)
+        self.assertEqual((d, c), ("/work/alloc/me/appspector/mine", "./mine -x +pe 2 ++server ++server-port 1234"))
+        from appspector.shell import Shell
+        sh = Shell(path)
+        sh.say = lambda text: None
+        sh.do_program("/home/me/prog/leanmd -s 10")
+        d, c, v = sh.spec.resolve(sh.site)
+        self.assertEqual((d, c), ("/home/me/prog", "./leanmd -s 10 +pe 4 ++server ++server-port 1234"))
+
+
 class RecordTests(unittest.TestCase):
     def test_records(self):
         tmp = tempfile.mkdtemp()

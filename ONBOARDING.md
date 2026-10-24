@@ -158,11 +158,15 @@ or another example such as `examples/charm++/leanmd`:
    show how); without it, run the viewer with `--no-image`. For the
    Balance button and clicks, register CCS handlers as pfield does and
    pass their names with `--balance` and `--inject`.
-2. Add it to the site file (`~/.appspector/sites/delta.ini`, section
-   `[programs]`): `mine = /path/to/dir | ./mine {args} +pe {pes} ++server
-   ++server-port {port}`. Then `program mine`, `pes 32`, `run` in the
-   shell. Or, without editing anything, `command /path/to/dir | ./mine
-   +pe {pes} ++server ++server-port {port}`.
+2. Point the shell at it. Quickest: `program /path/to/dir/mine -s 10`
+   (a path runs as `./mine -s 10 +pe {pes} ++server ++server-port
+   {port}`). To keep it: `program add mine /path/to/dir | ./mine {args}
+   +pe {pes} ++server ++server-port {port}`, which writes it into your
+   site file (`~/.appspector/sites/delta.ini`), and from then on
+   `program mine -s 10`. `command DIR | CMD` runs any command line once.
+   The three programs a fresh site file lists (pfield, wave2d, ccstest)
+   are the ones `setup-delta.sh` built in your own work directory; they
+   are not shared binaries.
 3. On the laptop the same works with `site local` (its programs are in
    `appspector/sites/local.ini`), or start the program yourself with
    `++server ++server-port 1234` and run `python3 -m appspector.viewer

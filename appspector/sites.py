@@ -130,3 +130,25 @@ def save_site_text(name, text):
     with open(path, "w") as f:
         f.write(text)
     return path
+
+
+def add_program(site, name, directory, command):
+    """Append a program to the site's file, copying a built-in site file into
+    the user directory first so built-ins stay pristine. Returns the path."""
+    path = site.path
+    if path.startswith(BUILTIN_DIR):
+        with open(path) as f:
+            path = save_site_text(site.name, f.read())
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read(path)
+    if not cp.has_section("programs"):
+        cp.add_section("programs")
+    cp["programs"][name] = "%s | %s" % (directory, command)
+    with open(path, "w") as f:
+        cp.write(f)
+    site.programs[name] = Program(name, site.expand(directory), command)
+    site.path = path
+    return path
+
+
+DEFAULT_COMMAND = "./{exe} {args} +pe {pes} ++server ++server-port {port}"

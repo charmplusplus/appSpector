@@ -9,6 +9,7 @@ views) lives in the viewer window, not here.
 Shell commands:
     sites | site NAME | site fetch NAME [SSH:PATH]     choose or import a site
     programs | program NAME [ARGS...]                   what to run (free text after the name is its arguments)
+    program /path/to/exe [ARGS...] | program add NAME DIR | CMD   your own programs
     pes N | nodes N | ppn N | walltime HH:MM:SS | port N
     show                                                the spec as it stands
     run                                                 submit; the shell says when the job is up
@@ -19,6 +20,7 @@ Shell commands:
 
 import argparse
 import cmd
+import os
 import shlex
 import subprocess
 import sys
@@ -94,13 +96,34 @@ class Shell(cmd.Cmd):
             self.say("%-14s %s\n%15s %s" % (p.name, p.directory, "", p.command))
 
     def do_program(self, arg):
-        """program NAME [ARGS...]: what to run; everything after the name is passed as the program's arguments."""
+        """program NAME [ARGS...]      what to run (a name from 'programs'); the rest is its arguments
+program /path/to/exe [ARGS...] an executable by path, run as ./exe ARGS +pe {pes} ++server ++server-port {port}
+program add NAME DIR | CMD      remember a program in your site file ({args} {pes} {port} placeholders)"""
         words = arg.split(None, 1)
         if not words:
-            self.say("program %s %s" % (self.spec.program, self.spec.args))
+            self.say("program %s %s" % (self.spec.program or self.spec.command, self.spec.args))
+            return
+        if words[0] == "add":
+            rest = words[1] if len(words) > 1 else ""
+            name, _, spec = rest.partition(" ")
+            if "|" not in spec or not name:
+                self.say("usage: program add NAME /path/to/dir | ./prog {args} +pe {pes} ++server ++server-port {port}")
+                return
+            d, c = spec.split("|", 1)
+            path = S.add_program(self.site, name, d.strip(), c.strip())
+            self.say("added %s to %s" % (name, path))
+            return
+        if "/" in words[0]:
+            exe = words[0]
+            self.spec.program = ""
+            self.spec.directory = os.path.dirname(exe) or "."
+            self.spec.command = S.DEFAULT_COMMAND.replace("{exe}", os.path.basename(exe))
+            self.spec.args = words[1] if len(words) > 1 else ""
+            self.do_show("")
             return
         if words[0] not in self.site.programs:
-            self.say("unknown program %s (known: %s). For an arbitrary command use 'command DIR | CMD'." % (words[0], ", ".join(sorted(self.site.programs))))
+            self.say("unknown program %s (known: %s). Use a path, or 'program add NAME DIR | CMD', or 'command DIR | CMD'."
+                     % (words[0], ", ".join(sorted(self.site.programs))))
             return
         self.spec.program = words[0]
         self.spec.args = words[1] if len(words) > 1 else ""

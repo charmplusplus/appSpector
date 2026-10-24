@@ -175,6 +175,13 @@ class Shell(cmd.Cmd):
             self.say("run failed: %s" % e)
             return
         self.current = job
+        if self.site.scheduler == "local":
+            self.say("waiting for its CCS server; a line appears here when it is up, then 'view' opens the viewer.")
+        else:
+            self.say("queued on %s. A line appears here when the job starts and its CCS server answers\n"
+                     "(queue waits range from seconds to hours); 'status' shows the queue state meanwhile,\n"
+                     "'log' the job output, and 'view' opens the viewer once it is up. 'quit' keeps the job running;\n"
+                     "come back with 'attach %s'." % (self.site.name, job.id))
         self._wait_in_background(job)
 
     def _wait_in_background(self, job):
@@ -183,7 +190,7 @@ class Shell(cmd.Cmd):
         def waiter():
             try:
                 J.wait_until_up(site, job, log=lambda s: None)
-                self.say("\n[job %s is up on %s port %d; 'view' opens the viewer]\n%s" % (job.id, job.node, job.port, self.prompt))
+                self.say("\n*** job %s is up on %s, port %d. Type 'view' to open the viewer. ***\n%s" % (job.id, job.node, job.port, self.prompt))
             except L.LaunchError as e:
                 self.say("\n[job %s: %s]\n%s" % (job.id, e, self.prompt))
         t = threading.Thread(target=waiter, daemon=True)

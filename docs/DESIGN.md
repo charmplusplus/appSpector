@@ -112,13 +112,17 @@ its own:
    setup script only installs the template and the environment. The
    same spec runs locally (`+pe N`, no Slurm). The generated script is
    kept next to the job output for the record.
-2. **A command interpreter.** `python3 -m appspector` opens a small shell
-   (Python's `cmd` module): `site delta`, `program pfield -k 16`, `pes
-   16`, `run`, `attach 23143979`, `inject 0.3 0.4 2000`, `balance`,
-   `stop`, `view`. Every command is also a one-line non-interactive
-   invocation, so scripts and the GUI call the same functions. This is
-   the cheap, scriptable form of the front end and the one to build
-   first.
+2. **A command interpreter, for firing the job.** `python3 -m appspector`
+   opens a small shell (Python's `cmd` module) whose business is the
+   launch: `site delta`, `program pfield -k 16`, `pes 16`, `run`,
+   `attach 23143979`, `status`, `stop`, and `view`, which opens the
+   viewer window on the job (the images start there). Interaction with
+   the running program, injecting, balancing, flipping the load view,
+   stays in the GUI's buttons and clicks; the shell does not duplicate
+   it. Every shell command is also a one-line non-interactive
+   invocation, so scripts and the launch pane call the same functions.
+   This is the cheap, scriptable form of the front end and the one to
+   build first.
 3. **A launch pane in the viewer window.** The same fields as a form:
    site, program (from a list the site reports, plus a free text field),
    arguments, PEs, nodes, a Run button, the job state and a log tail

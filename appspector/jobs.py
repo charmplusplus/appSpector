@@ -219,7 +219,15 @@ def wait_until_up(site, job, wait_secs=21600, log=print):
                 raise L.LaunchError("local job %s ended before the server came up; see %s" % (job.id, job.out))
             time.sleep(0.5)
         raise L.LaunchError("timed out waiting for %s" % job.id)
-    ip, port, node = L.wait_for_server(site.ssh, job.id, job.out, wait_secs, log=log)
+    try:
+        ip, port, node = L.wait_for_server(site.ssh, job.id, job.out, wait_secs, log=log)
+    except L.LaunchError as e:
+        if "ended before the server came up" in str(e):
+            status(site, job)                 # records the scheduler's final word (failed, cancelled, ...)
+            if job.state in ("submitted", "running", "up"):
+                job.state = "failed"
+                record(job)
+        raise
     job.ip, job.port, job.node, job.state = ip, port, node, "up"
     record(job)
     return job
@@ -260,6 +268,9 @@ def disconnect(site, job):
         record(job)
 
 
+TERMINAL = ("completed", "failed", "cancelled", "timeout", "ended", "node_fail", "out_of_memory")
+
+
 def status(site, job):
     """Refresh job.state from the scheduler (or the process)."""
     if site.scheduler == "local":
@@ -269,7 +280,9 @@ def status(site, job):
         text = L.ssh(site.ssh, "squeue -j %s -h -o '%%T %%N' 2>/dev/null; sacct -j %s -n -o State -P 2>/dev/null | head -1"
                      % (job.id, job.id), check=False).split()
         if text:
-            st = text[0].lower()
+            st = text[0].lower().split("+")[0]        # "CANCELLED by 123" / "COMPLETED+" -> cancelled / completed
+            if st == "by":
+                st = "cancelled"
             job.state = "up" if (job.state == "up" and st == "running") else st
             if len(text) > 1 and st == "running":
                 job.node = text[1]

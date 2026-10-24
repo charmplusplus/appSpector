@@ -240,8 +240,13 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
         self._waiters.append(t)
 
     def do_jobs(self, arg):
-        """jobs: recorded jobs, newest last."""
+        """jobs: recorded jobs, newest last; jobs not known to have ended are re-checked with the scheduler."""
         for j in J.load_jobs()[-15:]:
+            if j.state not in J.TERMINAL:
+                try:
+                    J.status(self._site_of(j), j)
+                except (L.LaunchError, KeyError):
+                    pass
             mark = "*" if self.current and j.id == self.current.id else " "
             self.say("%s %s" % (mark, j.label()))
 

@@ -100,6 +100,22 @@ on 2026-10-23 three clicks took one PE to 91 percent while the others
 waited at 42 to 50, and Balance moved 5 chares. `./demo_local.sh` runs it
 by default.
 
+## Clusters verified
+
+- **Delta** (Duo, ssh control master): 2 processes x 2 PEs and 4 x 4 PEs
+  pfield and wave2d jobs through the launcher and the shell; images in
+  about 120 ms per frame through the login-node forward.
+- **Anvil** (ssh key, no master; forwards are background ssh processes),
+  2026-10-24: `cluster/setup.sh` built the stack in
+  `/anvil/projects/x-asc050025/<user>/software/appspector`; an 8-PE pfield
+  job on the `shared` partition started once the request was trimmed to
+  the cores the PEs use (a whole-node request sat in the queue for 30
+  minutes), and the forward, image (273 ms) and LBObjLoads (144 chares on
+  8 PEs) all answered. Observation to look into: utilization read 11 to
+  13 percent per PE there, far below the laptop's and Delta's; pfield's
+  lock-step reduction every step may be latency-bound across the two
+  processes on Anvil.
+
 ## python3 -m appspector: the shell
 
 The front door since 2026-10-23: `site delta`, `program pfield -k 16`,

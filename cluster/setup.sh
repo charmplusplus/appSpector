@@ -4,11 +4,13 @@
 # batch scripts and a site file for the laptop shell. Run it ON A LOGIN NODE
 # of the cluster from a checkout of the appSpector repository:
 #
-#   SITE=delta ALLOC=mzu       bash cluster/setup.sh
-#   SITE=anvil ALLOC=asc050025 bash cluster/setup.sh
+#   bash cluster/setup.sh delta mzu          # bash cluster/setup.sh SITE ALLOCATION
+#   bash cluster/setup.sh anvil asc050025
 #
-# SITE picks cluster/<site>.env (modules, Slurm defaults); ALLOC is your
-# allocation. Optional overrides, prefixed so they cannot collide with the
+# SITE picks cluster/<site>.env (modules, Slurm defaults); ALLOCATION is
+# your allocation (on Delta the X of the Slurm account X-delta-cpu; on Anvil
+# the Slurm account itself). The same two values may come from the
+# environment as SITE and ALLOC. Optional overrides, prefixed so they cannot collide with the
 # cluster's own login environment (Anvil sets $WORK, for instance):
 #   APPSPECTOR_WORK       work directory (default from the env file)
 #   APPSPECTOR_BRANCH     charm branch (default recharm, which has every handler appSpector uses since charm PR #4071, 2026-10-23)
@@ -20,8 +22,9 @@
 # Nothing depends on who runs it: paths come from $USER and these variables.
 # Re-running skips the clone and the core build and rebuilds the rest.
 set -eu
-: "${SITE:?set SITE (delta, anvil)}"
-: "${ALLOC:?set ALLOC to your allocation (Slurm account or its prefix)}"
+SITE=${1:-${SITE:-}}
+ALLOC=${2:-${ALLOC:-}}
+[ -n "$SITE" ] && [ -n "$ALLOC" ] || { echo "usage: bash cluster/setup.sh SITE ALLOCATION   (e.g. delta mzu, anvil asc050025)"; exit 1; }
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ENVFILE=$REPO/cluster/$SITE.env
 [ -f "$ENVFILE" ] || { echo "no $ENVFILE; known sites: $(ls $REPO/cluster/*.env | xargs -n1 basename | sed 's/.env//' | tr '\n' ' ')"; exit 1; }

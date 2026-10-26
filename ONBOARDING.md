@@ -18,18 +18,21 @@ paths come from where you check it out and from the variables below.
 - **Delta:** an NCSA Delta account on an allocation (you need its short
   name, the `X` in the Slurm account `X-delta-cpu`).
 
-## 1. Get the code
+## 1. Get the code, on the laptop
 
 ```
 git clone https://github.com/charmplusplus/appSpector.git
 cd appSpector
-python3 -m unittest discover -s tests        # 29 tests against a fake CCS server, no Charm++ needed
+python3 -m unittest discover -s tests        # 36 tests against a fake CCS server, no Charm++ needed
 ```
+
+The laptop side is pure Python; nothing is built here.
 
 ## 2. Reaching a cluster from the laptop
 
-appSpector talks to a cluster over ssh with no prompts, so the alias
-must work non-interactively.
+Still on the laptop. appSpector talks to a cluster over ssh with no
+prompts, so the alias must work non-interactively. Set up the cluster you
+will use; you do not need both.
 
 **Delta (Duo on every login):** use an ssh control master that you open
 once. Add to `~/.ssh/config` on the laptop, with your NCSA username:
@@ -60,16 +63,21 @@ Host anvil
 `ssh anvil true` must return without a prompt. Port forwards are then
 background ssh processes that appSpector starts and stops itself.
 
-## 3. Build the server side on the cluster (once, about 10 minutes)
+## 3. Build the server side, on the cluster (once, about 10 minutes)
 
-On a login node, from a checkout of this repository:
+Now log in to the cluster (`ssh delta` or `ssh anvil`). On its login
+node, clone this repository a second time and run the setup script with
+two arguments: the cluster's name, and your allocation.
 
 ```
 git clone https://github.com/charmplusplus/appSpector.git
 cd appSpector
-SITE=delta ALLOC=<allocation>  bash cluster/setup.sh      # Delta: ALLOC is the X in X-delta-cpu
-SITE=anvil ALLOC=<account>     bash cluster/setup.sh      # Anvil: the Slurm account, e.g. asc050025
+bash cluster/setup.sh delta <allocation>     # on Delta: the X in your Slurm account X-delta-cpu
 ```
+
+On Anvil the second argument is the Slurm account itself:
+`bash cluster/setup.sh anvil asc050025`. Do this on the one cluster you
+use, not on both.
 
 `cluster/<site>.env` holds each cluster's modules and Slurm defaults; the
 script clones Charm++ (branch `recharm`), builds it with tracing and
@@ -85,8 +93,8 @@ lines of its output are the exact laptop commands to run next.
 
 ## 4. Run a job from the laptop and watch it
 
-The shell is the front door. With the ssh master open, from the laptop
-checkout:
+Back on the laptop. The shell is the front door. With the ssh master
+open, from the laptop checkout:
 
 ```
 python3 -m appspector
@@ -208,10 +216,10 @@ liveViz exercise the image pane shows your picture too. Steps:
 1. Get a Charm++ build that has liveViz and the per-object load handler.
    If your instructor set one up (a shared build on the cluster), run the
    setup script pointing at it, which takes about a minute and builds
-   only the examples and the demo in your own space:
-   `SITE=delta ALLOC=<allocation> APPSPECTOR_CHARM=<the shared build dir>
-   bash cluster/setup.sh`. Otherwise plain `cluster/setup.sh` builds your
-   own in ten minutes. Then `source <work dir>/env.sh` and build your
+   only the examples and the demo in your own space (on the cluster):
+   `APPSPECTOR_CHARM=<the shared build dir> bash cluster/setup.sh delta
+   <allocation>`. Otherwise `bash cluster/setup.sh delta <allocation>`
+   builds your own in ten minutes. Then `source <work dir>/env.sh` and build your
    program with `$CBUILD/bin/charmc`; the exercises' Makefiles take
    `CHARMC=...`. On a laptop, `charm-wt/<arch>/bin/charmc` after
    `tests/setup-laptop.sh`.

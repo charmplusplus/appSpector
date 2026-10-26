@@ -201,11 +201,16 @@ Charm++ program accepts `++server ++server-port N`; with that, appSpector
 shows your chares' loads per PE with no code changes, and if you did the
 liveViz exercise the image pane shows your picture too. Steps:
 
-1. Build your program against the appSpector Charm++ build, so it has
-   liveViz and the per-object load handler: on Delta `source
-   $WORK/env.sh` and use `$CBUILD/bin/charmc`; on a laptop
-   `charm-wt/<arch>/bin/charmc` after `tests/setup-laptop.sh`. The
-   exercises' Makefiles take `CHARMC=...`.
+1. Get a Charm++ build that has liveViz and the per-object load handler.
+   If your instructor set one up (a shared build on the cluster), run the
+   setup script pointing at it, which takes about a minute and builds
+   only the examples and the demo in your own space:
+   `SITE=delta ALLOC=<allocation> APPSPECTOR_CHARM=<the shared build dir>
+   bash cluster/setup.sh`. Otherwise plain `cluster/setup.sh` builds your
+   own in ten minutes. Then `source <work dir>/env.sh` and build your
+   program with `$CBUILD/bin/charmc`; the exercises' Makefiles take
+   `CHARMC=...`. On a laptop, `charm-wt/<arch>/bin/charmc` after
+   `tests/setup-laptop.sh`.
 2. In the shell: `program /path/to/your/particle 10000 16` (its own
    arguments after the path), `pes 4`, `run`, `view`. To keep it:
    `program add particle /path/to/dir | ./particle {args} +pe {pes}
@@ -215,6 +220,14 @@ liveViz exercise the image pane shows your picture too. Steps:
    twelve lines of `pfieldBalance` from `apps/pfield/pfield.C`. Your own
    handler names go in the program entry's third field (`| --balance
    myBalance`) or on `view -- --balance myBalance`.
+
+For an instructor preparing a class: run `cluster/setup.sh` once under
+your account, make the work directory group-readable (`chmod -R g+rX`),
+and give students the path of `<work dir>/charm/reconverse-linux-x86_64`
+for `APPSPECTOR_CHARM`. Each student still needs an account on an
+allocation, the ssh control master on their laptop, and ten minutes to
+run the script; nothing else is shared or needs coordination, since every
+job listens on its own compute node.
 
 Things that trip people up:
 

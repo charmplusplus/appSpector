@@ -154,3 +154,21 @@ from the laptop or another machine later: the record holds the site, job
 id, node and port, and `attach`/`view` rebuild the connection; sharing
 it between machines (or a phone) means moving that record to a small
 service, which is step 6 when it comes.
+
+## Agenda as of 2026-10-26
+
+1. charm PR #4071 (`LBObjLoads`) merged, then the scripts' default branch
+   becomes `recharm` and students build against stock Charm++.
+2. The launch pane in the viewer window (step 3 above): the form version
+   of the shell's site / program / size / run, the job state and log tail
+   while it queues, the viewer filling in when the job is up.
+3. `++server-auth` keys generated per run and passed to both ends, before
+   the tool is used by a class on a shared cluster.
+4. The Anvil observation: pfield read 11 to 13 percent per PE there; find
+   out whether the per-step reduction is latency-bound across processes
+   and, if so, sync every N steps.
+5. Re-attach from another device: move the job record to a small service
+   (an appSpector job id that resolves to site, node, port, key).
+6. Site descriptions for PBS and a cloud instance; the relay transport
+   for sites whose login node cannot reach the compute node (Frontier).
+7. ccsio as its own package and a pure-Python backend for PyCCS.

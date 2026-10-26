@@ -12,7 +12,7 @@ Shell commands:
     program /path/to/exe [ARGS...] | program add NAME DIR | CMD   your own programs
     pes N | nodes N | ppn N | walltime HH:MM:SS | port N
     show                                                the spec as it stands
-    run                                                 submit; the shell says when the job is up
+    run [--no-auth]                                     submit; the shell says when the job is up
     jobs | status [ID] | log [ID] | attach ID | stop [ID]
     view [ID]                                           open the viewer window on the job
     quit
@@ -195,8 +195,10 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
         except (KeyError, ValueError) as e:
             self.say("spec incomplete: %s" % e)
             return
-        self.say("site %s: %s PEs, %d node(s) x %d proc(s), port %d, walltime %s\n  cd %s\n  %s"
-                 % (self.site.name, v["pes"], v["nodes"], v["procs"] // v["nodes"], v["port"], v["walltime"], directory, command))
+        self.say("site %s: %s PEs, %d node(s) x %d proc(s), port %d, walltime %s, auth %s\n  cd %s\n  %s"
+                 % (self.site.name, v["pes"], v["nodes"], v["procs"] // v["nodes"], v["port"], v["walltime"],
+                    "on (a fresh key per job, <stamp> is the job's time stamp)" if v["keyfile"] else "off",
+                    directory, command))
 
     def do_script(self, arg):
         """script: print the batch script the current spec would submit (slurm sites)."""
@@ -210,7 +212,14 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
 
     # -- jobs ---------------------------------------------------------------
     def do_run(self, arg):
-        """run: submit or start the job; a background wait reports when its CCS server is up."""
+        """run [--no-auth]: submit or start the job; a background wait reports when its CCS server is up.
+Jobs start with ++server-auth and a fresh key by default ('auth = no' in the site file turns it off);
+--no-auth starts this one without."""
+        if arg.strip() == "--no-auth":
+            self.spec.auth = False
+        elif arg.strip():
+            self.say("usage: run [--no-auth]")
+            return
         try:
             job = J.start(self.site, self.spec, log=self.say)
         except (L.LaunchError, KeyError, ValueError, OSError) as e:
@@ -297,8 +306,12 @@ entry in the site file can carry them as a third field so they apply every time.
         except L.LaunchError as e:
             self.say(str(e))
             return
-        cmdline = [sys.executable, "-m", "appspector.viewer", host, str(port)] + shlex.split(job.viewer_args) + shlex.split(extra)
-        self.say("viewer on %s:%d (close its window to come back; the job keeps running)" % (host, port))
+        extra_words = shlex.split(extra)
+        cmdline = [sys.executable, "-m", "appspector.viewer", host, str(port)] + shlex.split(job.viewer_args) + extra_words
+        if job.key and not ({"-k", "--key"} & set(extra_words)):
+            cmdline += ["-k", job.key]
+        self.say("viewer on %s:%d%s (close its window to come back; the job keeps running)"
+                 % (host, port, ", authenticated" if job.key else ""))
         p = subprocess.Popen(cmdline)
         self.viewers.append(p)
 
@@ -335,6 +348,7 @@ def one_shot(argv):
     ap.add_argument("--walltime", default="")
     ap.add_argument("--wait", type=int, default=21600, help="seconds to wait for the server (run)")
     ap.add_argument("--no-view", action="store_true", help="run: do not open the viewer once the job is up")
+    ap.add_argument("--no-auth", action="store_true", help="run: start the job without ++server-auth")
     a = ap.parse_args(argv)
     sh = Shell(a.site)
     if a.action == "sites":
@@ -353,7 +367,7 @@ def one_shot(argv):
     if not a.program:
         ap.error("run/script need --program")
     sh.spec = J.JobSpec(program=a.program, args=a.args, pes=a.pes, nodes=a.nodes, procs_per_node=a.ppn,
-                        port=a.port, walltime=a.walltime)
+                        port=a.port, walltime=a.walltime, auth=False if a.no_auth else None)
     if a.action == "script":
         sh.do_script("")
         return 0

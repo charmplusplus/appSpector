@@ -131,6 +131,19 @@ recorded in `~/.appspector/jobs.json` for `attach`, `view`, `status`,
 `stop ID`, `jobs`, `sites`, `script`. Interaction with the running
 program stays in the viewer.
 
+Since 2026-10-26 every job runs with `++server-auth`: `run` draws a
+32-digit key, writes it as `<work>/jobs/<program>-<stamp>.key` (mode 600,
+over the same ssh command that writes the batch script, before
+submission), appends `++server-auth <that file>` to the command, and keeps
+the key in the job record (`jobs.json` is mode 600). `view` passes it to
+the viewer as `-k`, and `jobs.server(site, job)` returns an authenticated
+`ccsio.Server` for scripts. Other users on the login node can no longer
+query or steer the job; the traffic itself is not encrypted. `auth = no`
+in a site file or `run --no-auth` turns it off for a program that cannot
+take the option; `view -- -k KEY` serves a job started by hand with its
+own key file. The key is decimal because the server parses the key string
+as decimal digit pairs (see `ccsio.protocol.parse_key`).
+
 ## appspector.launch: the launcher primitives
 
 `python -m appspector.launch run --site delta --sbatch /remote/wave2d.sbatch`

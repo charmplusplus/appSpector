@@ -136,6 +136,7 @@ walltime = 00:10:00
 mem = $MEM
 launcher = $LAUNCHER
 port = $PORT
+auth = yes
 
 [programs]
 pfield = {appspector}/apps/pfield | ./pfield {args} +pe {pes} ++server ++server-port {port} +balancer GreedyRefineLB

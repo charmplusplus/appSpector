@@ -7,10 +7,19 @@ submitted over ssh for a Slurm site, or a local process. ``connect(job)``
 brings up the transport (the ssh port forward) and returns host and port
 for ccsio and the viewer. Every job is recorded in ~/.appspector/jobs.json
 so a later shell, or another machine with the same file, can attach.
+
+Authentication: unless the site says ``auth = no`` or the spec says
+``auth=False``, every job gets a fresh CCS key. The key file (``0 KEY``, the
+level-0 line ``++server-auth`` reads) is written next to the batch script
+with mode 600, ``++server-auth <file>`` is appended to the command, and the
+key string is kept in the job record so ``view`` and ``server()`` can use it
+without asking. The handshake authenticates each request; it does not
+encrypt the traffic.
 """
 
 import json
 import os
+import secrets
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
@@ -52,9 +61,15 @@ class JobSpec:
     port: int = 0
     directory: str = ""          # explicit program (overrides .program)
     command: str = ""
+    auth: Optional[bool] = None  # None: the site's setting
 
-    def resolve(self, site: Site):
-        """Fill defaults from the site; returns (directory, command, values)."""
+    def wants_auth(self, site: Site):
+        return site.auth if self.auth is None else self.auth
+
+    def resolve(self, site: Site, stamp=None):
+        """Fill defaults from the site; returns (directory, command, values).
+        ``stamp`` names this run's files (key file); unknown before ``start``,
+        shown as <stamp> by ``show`` and ``script``."""
         pes = self.pes or site.default_pes
         nodes = self.nodes or site.default_nodes
         ppn = self.procs_per_node or site.default_procs_per_node
@@ -83,9 +98,15 @@ class JobSpec:
                                % (site.name, self.program, ", ".join(sorted(site.programs)) or "none"))
             p = site.programs[self.program]
             directory, command = p.directory, p.command
+        keyfile = ""
+        if self.wants_auth(site):
+            keyfile = key_path(site, self.program or "job", stamp or "<stamp>")
         values = dict(args=self.args, pes=pes, port=port, procs=procs, cores_per_proc=cores_per_proc,
-                      nodes=nodes, walltime=self.walltime or site.walltime, mem=self.mem or site.mem)
+                      nodes=nodes, walltime=self.walltime or site.walltime, mem=self.mem or site.mem,
+                      keyfile=keyfile)
         command = site.expand(command, **values)
+        if keyfile and "++server-auth" not in command:
+            command += " ++server-auth " + keyfile
         directory = site.expand(directory, **values)
         return directory, command, values
 
@@ -107,10 +128,35 @@ class Job:
     script: str = ""
     pid: int = 0                 # local jobs
     viewer_args: str = ""        # from the program entry
+    key: str = ""                # the ++server-auth key string ("" when the job runs without auth)
 
     def label(self):
-        return "%s %s%s on %s (%d PEs, port %d) %s" % (
-            self.id, self.program, " " + self.args if self.args else "", self.site, self.pes, self.port, self.state)
+        return "%s %s%s on %s (%d PEs, port %d%s) %s" % (
+            self.id, self.program, " " + self.args if self.args else "", self.site, self.pes, self.port,
+            ", auth" if self.key else "", self.state)
+
+
+# -- keys ------------------------------------------------------------------
+
+KEY_DIGITS = 32
+
+
+def new_key():
+    """A fresh key string for ++server-auth. The server reads the string as
+    16 DECIMAL digit pairs (sscanf "%d" in CCS_AUTH_makeSecretKey), so the key
+    is 32 decimal digits: 100^16, about 106 bits."""
+    return "".join(secrets.choice("0123456789") for _ in range(KEY_DIGITS))
+
+
+def key_file_text(key):
+    """The ++server-auth file: one line, security level 0 and the key."""
+    return "0 %s\n" % key
+
+
+def key_path(site, program, stamp):
+    if site.scheduler == "local":
+        return os.path.join(site.work, "%s-%s.key" % (program, stamp))
+    return "%s/jobs/%s-%s.key" % (site.work, program, stamp)
 
 
 # -- records ---------------------------------------------------------------
@@ -124,9 +170,15 @@ def load_jobs():
 
 
 def save_jobs(jobs):
+    """Write the records; the file holds job keys, so it is mode 600."""
     os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
-    with open(JOBS_FILE, "w") as f:
+    fd = os.open(JOBS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump([asdict(j) for j in jobs], f, indent=1)
+    try:
+        os.chmod(JOBS_FILE, 0o600)      # an older, world-readable file
+    except OSError:
+        pass
 
 
 def record(job):
@@ -144,8 +196,8 @@ def find_job(job_id):
 
 # -- starting ----------------------------------------------------------------
 
-def render_batch(site, spec, jobname="appspector"):
-    directory, command, v = spec.resolve(site)
+def render_batch(site, spec, jobname="appspector", stamp=None):
+    directory, command, v = spec.resolve(site, stamp)
     out = "%s/jobs/%s-%%j.out" % (site.work, spec.program or "job")
     script = SLURM_TEMPLATE.format(
         jobname=jobname, account=site.account, partition=site.partition, nodes=v["nodes"], procs=v["procs"],
@@ -165,32 +217,56 @@ def start(site, spec, log=print):
     if not L.reachable(site.ssh):
         raise L.LaunchError("cannot ssh to '%s' non-interactively: open a control master with `ssh %s` "
                             "(Duo sites) or set up key authentication, then retry" % (site.ssh, site.ssh))
-    script, out_tmpl, v = render_batch(site, spec, jobname="as-" + (spec.program or "job")[:12])
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    script, out_tmpl, v = render_batch(site, spec, jobname="as-" + (spec.program or "job")[:12], stamp=stamp)
     remote_script = "%s/jobs/%s-%s.sbatch" % (site.work, spec.program or "job", stamp)
-    L.ssh(site.ssh, "mkdir -p %s/jobs && cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (site.work, remote_script, script))
+    key = new_key() if v["keyfile"] else ""
+    parts = ["mkdir -p %s/jobs" % site.work]
+    if key:
+        # the key file goes in before the batch script is submitted. Created
+        # empty, then chmod 600, then written: a umask does not help on a
+        # directory with a default ACL (Anvil's project space), chmod does.
+        kf = v["keyfile"]
+        parts.append("touch %s && chmod 600 %s && cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF"
+                     % (kf, kf, kf, key_file_text(key)))
+    parts.append("cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (remote_script, script))
+    L.ssh(site.ssh, " && ".join(parts))
     job_id = L.submit(site.ssh, remote_script)
     job = Job(id=job_id, site=site.name, program=spec.program or spec.command, args=spec.args, pes=v["pes"],
               port=v["port"], out=out_tmpl.replace("%j", job_id), submitted=time.time(), script=remote_script,
-              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "")
+              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "",
+              key=key)
     record(job)
     log("submitted job %s on %s: %s" % (job_id, site.name, job.out))
     return job
 
 
+def write_key_file(path, key):
+    """Write a local ++server-auth file, readable by this user only."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(key_file_text(key))
+    os.chmod(path, 0o600)
+
+
 def _start_local(site, spec, log):
-    directory, command, v = spec.resolve(site)
-    os.makedirs(site.work, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    directory, command, v = spec.resolve(site, stamp)
+    os.makedirs(site.work, exist_ok=True)
     out = os.path.join(site.work, "%s-%s.out" % (spec.program or "job", stamp))
     exe = command.split()[0]
     if not os.path.exists(os.path.join(directory, exe)):
         raise L.LaunchError("no %s in %s (built?)" % (exe, directory))
+    key = ""
+    if v["keyfile"]:
+        key = new_key()
+        write_key_file(v["keyfile"], key)
     with open(out, "w") as f:
         proc = subprocess.Popen(command, shell=True, cwd=directory, stdout=f, stderr=subprocess.STDOUT)
     job = Job(id="local-%d" % proc.pid, site=site.name, program=spec.program or spec.command, args=spec.args,
               pes=v["pes"], port=v["port"], out=out, submitted=time.time(), pid=proc.pid, state="running",
-              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "")
+              viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "",
+              key=key)
     record(job)
     log("started %s (pid %d): %s" % (job.program, proc.pid, out))
     return job
@@ -259,6 +335,14 @@ def connect(site, job, local_port=None):
     job.forward = spec
     record(job)
     return "127.0.0.1", local_port
+
+
+def server(site, job, **kw):
+    """connect() plus a ccsio.Server on the result, authenticated with the
+    job's key when it has one. For scripts: ``s = jobs.server(site, job)``."""
+    import ccsio
+    host, port = connect(site, job)
+    return ccsio.Server(host, port, key=job.key or None, **kw)
 
 
 def disconnect(site, job):

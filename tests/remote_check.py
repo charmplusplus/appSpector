@@ -13,9 +13,15 @@ faulthandler.dump_traceback_later(180, exit=True)
 import ccsio
 from ccsio import liveviz, objload, perf
 
-host, port = sys.argv[1], int(sys.argv[2])
-png = sys.argv[3] if len(sys.argv) > 3 else None
-s = ccsio.Server(host, port, timeout=30)
+argv = sys.argv[1:]
+key = None
+if "-k" in argv:                       # -k KEY: the job runs with ++server-auth
+    i = argv.index("-k")
+    key = argv[i + 1]
+    del argv[i:i + 2]
+host, port = argv[0], int(argv[1])
+png = argv[2] if len(argv) > 2 else None
+s = ccsio.Server(host, port, key=key, timeout=30)
 print("job:", s)
 cfg = liveviz.get_config(s)
 print("liveViz config:", cfg)
@@ -56,7 +62,7 @@ except (ValueError, ccsio.CcsError) as e:
 import argparse
 import tkinter as tk
 from appspector import viewer as V
-args = argparse.Namespace(host=host, port=port, key=None, size=(400, 300), image_ms=200, perf_ms=1000,
+args = argparse.Namespace(host=host, port=port, key=key, size=(400, 300), image_ms=200, perf_ms=1000,
                           sts=None, no_image=False, no_perf=False, timeout=30.0, pane="objects",
                           inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
 root = tk.Tk()

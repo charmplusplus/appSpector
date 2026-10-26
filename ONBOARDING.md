@@ -109,7 +109,11 @@ appspector> quit          # the job keeps running; 'stop' cancels it
 ```
 
 Every job is recorded in `~/.appspector/jobs.json`, so a later shell can
-`attach <id>` and `view` it again. The same commands work in one shot:
+`attach <id>` and `view` it again. Every job also starts with
+`++server-auth` and a key made for it: nobody else on the cluster can
+query or steer your job, and there is nothing to do for it, because `run`
+puts the key on the cluster and `view` hands it to the viewer. The same
+commands work in one shot:
 `python3 -m appspector run --site delta --program pfield --pes 16 --args
 "-k 16"` submits, waits, and opens the viewer; `python3 -m appspector
 view <id>`, `status <id>`, `stop <id>`, `jobs`, `sites`, and `script`
@@ -263,5 +267,6 @@ Things that trip people up:
 - Per-PE view refinements from the old demo: an absolute time axis,
   horizontal bars, Show BG Load / Show Idle toggles.
 - A side-by-side layout option.
-- `++server-auth` on by default in the launcher (the client supports it).
+- A reconverse fix so `++server-auth` reads hexadecimal keys as the
+  manual says (the key files are decimal digits today for that reason).
 - Frontier and cloud transport (see INITIAL-THOUGHTS.md).

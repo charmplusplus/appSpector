@@ -53,20 +53,36 @@ class SiteTests(unittest.TestCase):
 
     def test_resolve_defaults_and_overrides(self):
         d, c, v = J.JobSpec(program="pfield").resolve(self.site)
-        self.assertEqual(c, "./pfield  +pe 4 ++server ++server-port 1234 +balancer GreedyRefineLB")
+        self.assertEqual(c, "./pfield  +pe 4 ++server ++server-port 1234 +balancer GreedyRefineLB"
+                            " ++server-auth /work/alloc/me/appspector/jobs/pfield-<stamp>.key")
         self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (1, 2, 2))      # 4 PEs over 2 procs
-        d, c, v = J.JobSpec(program="pfield", args="-k 16 -n 400", pes=32, nodes=2, procs_per_node=4, port=2000).resolve(self.site)
+        d, c, v = J.JobSpec(program="pfield", args="-k 16 -n 400", pes=32, nodes=2, procs_per_node=4, port=2000,
+                            auth=False).resolve(self.site)
         self.assertEqual(c, "./pfield -k 16 -n 400 +pe 32 ++server ++server-port 2000 +balancer GreedyRefineLB")
+        self.assertEqual(v["keyfile"], "")
         self.assertEqual((v["nodes"], v["procs"], v["cores_per_proc"]), (2, 8, 4))      # 32 PEs over 8 procs
         with self.assertRaises(KeyError):
             J.JobSpec(program="nope").resolve(self.site)
         with self.assertRaises(ValueError):            # 4 PEs over 12 processes
             J.JobSpec(program="pfield", pes=4, nodes=4, procs_per_node=3).resolve(self.site)
-        d, c, v = J.JobSpec(directory="/x", command="./mine +pe {pes} ++server ++server-port {port}", pes=3).resolve(self.site)
-        self.assertEqual((d, c), ("/x", "./mine +pe 3 ++server ++server-port 1234"))
+        d, c, v = J.JobSpec(directory="/x", command="./mine +pe {pes} ++server ++server-port {port}", pes=3).resolve(self.site, "S1")
+        self.assertEqual((d, c), ("/x", "./mine +pe 3 ++server ++server-port 1234 ++server-auth /work/alloc/me/appspector/jobs/job-S1.key"))
+        # a command that places {keyfile} itself is left alone
+        d, c, v = J.JobSpec(directory="/x", command="./mine ++server-auth {keyfile} +pe {pes}", pes=3).resolve(self.site, "S1")
+        self.assertEqual(c, "./mine ++server-auth /work/alloc/me/appspector/jobs/job-S1.key +pe 3")
+        # the site can turn auth off
+        with open(self.path, "w") as f:
+            f.write(SITE_INI.replace("port = 1234\n", "port = 1234\nauth = no\n"))
+        off = S.load_site(self.path)
+        self.assertFalse(off.auth)
+        d, c, v = J.JobSpec(program="pfield").resolve(off, "S1")
+        self.assertNotIn("++server-auth", c)
+        d, c, v = J.JobSpec(program="pfield", auth=True).resolve(off, "S1")
+        self.assertIn("++server-auth /work/alloc/me/appspector/jobs/pfield-S1.key", c)
 
     def test_render_batch(self):
-        script, out, v = J.render_batch(self.site, J.JobSpec(program="pfield", pes=16, nodes=2, procs_per_node=2))
+        script, out, v = J.render_batch(self.site, J.JobSpec(program="pfield", pes=16, nodes=2, procs_per_node=2),
+                                        stamp="20261026-093000")
         self.assertIn("#SBATCH -A alloc-cpu", script)
         self.assertIn("#SBATCH -p interactive", script)
         self.assertIn("#SBATCH -N 2", script)
@@ -75,7 +91,8 @@ class SiteTests(unittest.TestCase):
         self.assertIn("#SBATCH -o /work/alloc/me/appspector/jobs/pfield-%j.out", script)
         self.assertIn("source /work/alloc/me/appspector/env.sh", script)
         self.assertIn("cd /work/alloc/me/appSpector/apps/pfield", script)
-        self.assertIn("stdbuf -o0 -e0 srun --mpi=pmix -n 4 -c 4 ./pfield  +pe 16 ++server ++server-port 1234 +balancer GreedyRefineLB", script)
+        self.assertIn("stdbuf -o0 -e0 srun --mpi=pmix -n 4 -c 4 ./pfield  +pe 16 ++server ++server-port 1234 +balancer GreedyRefineLB"
+                      " ++server-auth /work/alloc/me/appspector/jobs/pfield-20261026-093000.key\n", script)
         self.assertEqual(out, "/work/alloc/me/appspector/jobs/pfield-%j.out")
         # a site without a memory request leaves the line out
         site2 = S.load_site(self.path)
@@ -96,14 +113,115 @@ class AddProgramTests(unittest.TestCase):
         again = S.load_site(path)
         self.assertEqual(again.programs["mine"].directory, "/work/alloc/me/appspector/mine")
         self.assertEqual(again.programs["mine"].viewer_args, "--inject myInject")
-        d, c, v = J.JobSpec(program="mine", args="-x", pes=2).resolve(again)
+        d, c, v = J.JobSpec(program="mine", args="-x", pes=2, auth=False).resolve(again)
         self.assertEqual((d, c), ("/work/alloc/me/appspector/mine", "./mine -x +pe 2 ++server ++server-port 1234"))
         from appspector.shell import Shell
         sh = Shell(path)
         sh.say = lambda text: None
         sh.do_program("/home/me/prog/leanmd -s 10")
-        d, c, v = sh.spec.resolve(sh.site)
-        self.assertEqual((d, c), ("/home/me/prog", "./leanmd -s 10 +pe 4 ++server ++server-port 1234"))
+        d, c, v = sh.spec.resolve(sh.site, "S1")
+        self.assertEqual((d, c), ("/home/me/prog", "./leanmd -s 10 +pe 4 ++server ++server-port 1234"
+                                                   " ++server-auth /work/alloc/me/appspector/jobs/job-S1.key"))
+
+
+class AuthTests(unittest.TestCase):
+    def test_key_format(self):
+        from ccsio import protocol as P
+        k1, k2 = J.new_key(), J.new_key()
+        self.assertNotEqual(k1, k2)
+        self.assertEqual(len(k1), 32)
+        self.assertTrue(k1.isdigit())
+        raw = P.parse_key(k1)                   # what the server makes of the string
+        self.assertEqual(len(raw), 16)
+        self.assertEqual(list(raw), [int(k1[i:i + 2]) for i in range(0, 32, 2)])
+        self.assertEqual(J.key_file_text(k1), "0 %s\n" % k1)
+
+    def test_slurm_start_writes_key_before_script(self):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "cluster.ini")
+        with open(path, "w") as f:
+            f.write(SITE_INI)
+        site = S.load_site(path)
+        from appspector import launch as L
+        sent = []
+        saved = (L.reachable, L.ssh, L.submit, J.JOBS_FILE)
+        L.reachable = lambda alias: True
+        L.ssh = lambda alias, cmd, **kw: sent.append(cmd) or ""
+        L.submit = lambda alias, script: "4242"
+        J.JOBS_FILE = os.path.join(tmp, "jobs.json")
+        try:
+            job = J.start(site, J.JobSpec(program="pfield", pes=4), log=lambda s: None)
+            self.assertEqual(job.id, "4242")
+            self.assertEqual(len(job.key), 32)
+            cmd = sent[0]
+            keyfile = cmd.split("touch ")[1].split(" ")[0]
+            self.assertTrue(keyfile.startswith("/work/alloc/me/appspector/jobs/pfield-") and keyfile.endswith(".key"))
+            self.assertIn("mkdir -p /work/alloc/me/appspector/jobs && touch %s && chmod 600 %s && cat > %s <<'APPSPECTOR_EOF'\n0 %s\nAPPSPECTOR_EOF && cat > /work/alloc/me/appspector/jobs/pfield-"
+                          % (keyfile, keyfile, keyfile, job.key), cmd)
+            self.assertIn("++server-auth %s\n" % keyfile, cmd)        # the batch script names the same file
+            self.assertEqual(J.find_job("4242").key, job.key)          # the record keeps the key
+            self.assertEqual(oct(os.stat(J.JOBS_FILE).st_mode & 0o777), "0o600")
+            self.assertIn(", auth) submitted", job.label())
+            # --no-auth: no key file, no key
+            sent.clear()
+            job2 = J.start(site, J.JobSpec(program="pfield", pes=4, auth=False), log=lambda s: None)
+            self.assertEqual(job2.key, "")
+            self.assertNotIn("chmod 600", sent[0])
+            self.assertNotIn("++server-auth", sent[0])
+        finally:
+            L.reachable, L.ssh, L.submit, J.JOBS_FILE = saved
+
+    def test_local_start_writes_key_file(self):
+        tmp = tempfile.mkdtemp()
+        prog = os.path.join(tmp, "prog")
+        with open(prog, "w") as f:
+            f.write("#!/bin/sh\nsleep 30\n")
+        os.chmod(prog, 0o755)
+        site = S.load_site("local")
+        site.work = os.path.join(tmp, "runs")
+        old = J.JOBS_FILE
+        J.JOBS_FILE = os.path.join(tmp, "jobs.json")
+        try:
+            job = J.start(site, J.JobSpec(directory=tmp, command="./prog +pe {pes} ++server ++server-port {port}", pes=1),
+                          log=lambda s: None)
+            try:
+                keyfiles = [f for f in os.listdir(site.work) if f.endswith(".key")]
+                self.assertEqual(len(keyfiles), 1)
+                kp = os.path.join(site.work, keyfiles[0])
+                self.assertEqual(oct(os.stat(kp).st_mode & 0o777), "0o600")
+                with open(kp) as f:
+                    self.assertEqual(f.read(), "0 %s\n" % job.key)
+                self.assertEqual(len(job.key), 32)
+            finally:
+                J.stop(site, job)
+        finally:
+            J.JOBS_FILE = old
+
+    def test_view_passes_key(self):
+        import subprocess
+        from appspector.shell import Shell
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "cluster.ini")
+        with open(path, "w") as f:
+            f.write(SITE_INI)
+        sh = Shell(path)
+        sh.say = lambda text: None
+        sh.current = J.Job(id="7", site="cluster", program="pfield", args="", pes=4, port=1234, out="/o",
+                           submitted=1.0, state="up", node="cn1", key="12" * 16)
+        calls = []
+        saved = (J.connect, subprocess.Popen)
+        J.connect = lambda site, job: ("127.0.0.1", 1234)
+        subprocess.Popen = lambda cmdline, **kw: calls.append(cmdline) or type("P", (), {"wait": lambda self: 0})()
+        try:
+            sh.do_view("")
+            self.assertEqual(calls[0][-2:], ["-k", "12" * 16])
+            sh.do_view("-- --no-image -k 9999")
+            self.assertEqual(calls[1][-3:], ["--no-image", "-k", "9999"])       # the user's key wins
+            sh.current.key = ""
+            sh.do_view("")
+            self.assertNotIn("-k", calls[2])
+        finally:
+            J.connect, subprocess.Popen = saved
 
 
 class RecordTests(unittest.TestCase):

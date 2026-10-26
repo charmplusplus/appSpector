@@ -52,10 +52,11 @@ implementation:
   clouds: a tiny relay on a reachable instance, the laptop connects to
   it, the job connects to it, and the cloud "login node" is whatever the
   user has (an AWS instance started by the launcher, for example).
-- **Authentication.** `++server-auth` with a key file exists on the job
-  side and `ccsio` implements the client side; the launcher should
-  generate a key per run and pass it to both ends by default rather than
-  leave the port open to anyone on the login node.
+- **Authentication.** Done 2026-10-26: `++server-auth` with a key file
+  exists on the job side and `ccsio` implements the client side; the
+  launcher generates a key per run and passes it to both ends by default
+  (agenda item 3 below has the details), so the port is not open to
+  anyone on the login node.
 - **Several jobs and several viewers.** Nothing requires one job per
   viewer; the Server object is per connection and the viewer could hold
   tabs. A persistent session file (job id, node, port, key) lets a
@@ -162,8 +163,11 @@ service, which is step 6 when it comes.
 2. The launch pane in the viewer window (step 3 above): the form version
    of the shell's site / program / size / run, the job state and log tail
    while it queues, the viewer filling in when the job is up.
-3. `++server-auth` keys generated per run and passed to both ends, before
-   the tool is used by a class on a shared cluster. The sketch:
+3. Done 2026-10-26 (verified on the laptop and on Anvil: key accepted,
+   no key and wrong key refused, viewer and remote_check authenticated):
+   `++server-auth` keys generated per run and passed to both ends. The
+   implementation follows this sketch; `jobs.server(site, job)` is the
+   script-side entry, `tests/remote_check.py` takes `-k`. The sketch:
 
    - **What exists.** The job side takes `++server-auth FILE`; the file
      holds lines `LEVEL KEY`, and every request then carries a SHA-1

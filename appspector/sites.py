@@ -21,6 +21,7 @@ writes one) and fetched with ``site fetch``.
     mem = 16g
     launcher = stdbuf -o0 -e0 srun --mpi=pmix -n {procs} -c {cores_per_proc}
     port = 1234
+    auth = yes                          ; a fresh ++server-auth key per job (default yes)
 
     [programs]
     name = directory | command line [| viewer options]   ; {args} {pes} {port} are filled in
@@ -65,6 +66,7 @@ class Site:
     mem: str = "16g"
     launcher: str = "srun -n {procs} -c {cores_per_proc}"
     port: int = 1234
+    auth: bool = True     # start jobs with ++server-auth and a per-job key
     programs: Dict[str, Program] = field(default_factory=dict)
     path: str = ""
 
@@ -110,6 +112,8 @@ def load_site(name_or_path):
     for key in ("cores_per_node", "default_nodes", "default_procs_per_node", "default_pes", "port"):
         if key in sec:
             setattr(s, key, int(sec[key]))
+    if "auth" in sec:
+        s.auth = sec["auth"].strip().lower() in ("1", "yes", "true", "on")
     if not s.work:
         s.work = "{appspector}/runs" if s.scheduler == "local" else ""
     s.appspector = s.expand(s.appspector)

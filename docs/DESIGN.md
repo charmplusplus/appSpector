@@ -157,13 +157,45 @@ service, which is step 6 when it comes.
 
 ## Agenda as of 2026-10-26
 
-1. charm PR #4071 (`LBObjLoads`) merged, then the scripts' default branch
-   becomes `recharm` and students build against stock Charm++.
+1. Done 2026-10-26: #4071 was merged on 2026-10-23; the scripts' default
+   branch is `recharm`, and the default wall time is 10 minutes.
 2. The launch pane in the viewer window (step 3 above): the form version
    of the shell's site / program / size / run, the job state and log tail
    while it queues, the viewer filling in when the job is up.
 3. `++server-auth` keys generated per run and passed to both ends, before
-   the tool is used by a class on a shared cluster.
+   the tool is used by a class on a shared cluster. The sketch:
+
+   - **What exists.** The job side takes `++server-auth FILE`; the file
+     holds lines `LEVEL KEY`, and every request then carries a SHA-1
+     challenge-response over a 16-byte secret (ccs-auth). `ccsio` already
+     implements the client half (`Server(host, port, key=...)`, verified
+     against classic and reconverse servers), and the viewer takes `-k`.
+     One quirk to respect: the server reads the key string as DECIMAL
+     digit pairs (`sscanf("%d")`), so a key must be 32 decimal digits,
+     bytes 00 to 99, about 106 bits of entropy. A reconverse fix to parse
+     hex properly is worth a small PR later, but digit keys work with
+     every build.
+   - **Automatic, nothing for the student.** On `run`, the launcher draws
+     a random key, writes it on the cluster as `<work>/jobs/<job>.key`
+     (mode 600, created over the same ssh connection as the batch script,
+     before submission) and appends `++server-auth <that file>` to the
+     command line in the batch script. The key is also stored in the
+     laptop's job record (`~/.appspector/jobs.json`, kept mode 600), so a
+     later shell, `attach` and `view` have it without asking. `view`
+     passes it to the viewer as `-k`; `connect()` returns it beside host
+     and port for scripts. Local jobs get the same treatment (key file in
+     `runs/`), which also protects a job on a shared workstation.
+   - **Scope.** The handshake authenticates each request; it does not
+     encrypt the traffic, so images and replies still cross the network in
+     the clear inside the ssh forward (which is encrypted) and in the
+     clear on the cluster's internal network between the login node and
+     the compute node. Good enough for a class; it keeps other users on
+     the login nodes from injecting particles, triggering balances, or
+     reading images from a student's job.
+   - **Controls.** `auth = yes` in the site file (default yes), `run
+     --no-auth` for a program that does not accept the option (any
+     Charm++ program does), and for a job someone started by hand with
+     their own key file, `view -- -k KEY`.
 4. The Anvil observation: pfield read 11 to 13 percent per PE there; find
    out whether the per-step reduction is latency-bound across processes
    and, if so, sync every N steps.

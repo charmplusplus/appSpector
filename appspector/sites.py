@@ -17,7 +17,7 @@ writes one) and fetched with ``site fetch``.
     default_nodes = 1
     default_procs_per_node = 2
     default_pes = 4
-    walltime = 00:30:00
+    walltime = 00:10:00
     mem = 16g
     launcher = stdbuf -o0 -e0 srun --mpi=pmix -n {procs} -c {cores_per_proc}
     port = 1234
@@ -61,7 +61,7 @@ class Site:
     default_nodes: int = 1
     default_procs_per_node: int = 1
     default_pes: int = 4
-    walltime: str = "00:30:00"
+    walltime: str = "00:10:00"
     mem: str = "16g"
     launcher: str = "srun -n {procs} -c {cores_per_proc}"
     port: int = 1234

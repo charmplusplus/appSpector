@@ -6,7 +6,7 @@
 #
 #   bash tests/setup-laptop.sh            # clones into ../appSpector/charm-wt
 #
-# Variables: BRANCH (default appspector-delta; recharm once PR #4071 merges),
+# Variables: BRANCH (default recharm),
 # CHARM_WT (default <repo>/charm-wt), ARCH (default by OS: reconverse-darwin-arm8
 # on macOS arm64, reconverse-linux-x86_64 on Linux), JOBS (default 8).
 # macOS: Xcode command line tools, cmake, and libjpeg (MacPorts or Homebrew)
@@ -14,7 +14,7 @@
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 CHARM_WT=${CHARM_WT:-$REPO/charm-wt}
-BRANCH=${BRANCH:-appspector-delta}
+BRANCH=${BRANCH:-recharm}
 JOBS=${JOBS:-8}
 if [ -z "${ARCH:-}" ]; then
   case "$(uname -s)-$(uname -m)" in

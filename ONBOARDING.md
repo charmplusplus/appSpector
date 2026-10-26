@@ -72,8 +72,7 @@ SITE=anvil ALLOC=<account>     bash cluster/setup.sh      # Anvil: the Slurm acc
 ```
 
 `cluster/<site>.env` holds each cluster's modules and Slurm defaults; the
-script clones Charm++ (branch `appspector-delta` until PR #4071 is merged
-into `recharm`, then `BRANCH=recharm`), builds it with tracing and
+script clones Charm++ (branch `recharm`), builds it with tracing and
 liveViz, builds the example programs and `apps/pfield`, and writes
 `env.sh`, batch scripts and a site file into the work directory: by
 default `/work/hdd/<alloc>/<you>/appspector` on Delta and
@@ -100,7 +99,8 @@ appspector> run                                 # generates the batch script, su
 
 `run` prints the job id and the shell keeps working; a line appears when
 the job's CCS server is up (queue waits on cpu-interactive have ranged
-from seconds to 12 hours). Then:
+from seconds to 12 hours; jobs get 10 minutes of wall time by default,
+`walltime 00:30:00` for more). Then:
 
 ```
 appspector> view          # opens the viewer window on the job (forward registered for you)
@@ -160,7 +160,7 @@ client for poking at any job by hand.
 Charm++ side: the handlers the viewer relies on are `lvConfig`/`lvImage`
 (liveViz), `CkPerfSumDetail compressed` and `CkPerfSumDetail sts`
 (trace-utilization, merged in charm PR #4068), and `LBObjLoads`
-(LBManager, PR #4071). The CCS protocol itself is documented at the top
+(LBManager, merged in charm PR #4071). The CCS protocol itself is documented at the top
 of `ccsio/protocol.py`.
 
 ## Connecting your own program

@@ -11,7 +11,7 @@
 # allocation. Optional overrides, prefixed so they cannot collide with the
 # cluster's own login environment (Anvil sets $WORK, for instance):
 #   APPSPECTOR_WORK       work directory (default from the env file)
-#   APPSPECTOR_BRANCH     charm branch (default appspector-delta; recharm once PR #4071 is merged)
+#   APPSPECTOR_BRANCH     charm branch (default recharm, which has every handler appSpector uses since charm PR #4071, 2026-10-23)
 #   APPSPECTOR_PARTITION, APPSPECTOR_ACCOUNT, APPSPECTOR_MEM, APPSPECTOR_PORT (1234), APPSPECTOR_JOBS (16)
 #   APPSPECTOR_CHARM      an existing Charm++ build directory to use instead of
 #                         cloning and building one (a shared build for a class, e.g.
@@ -27,7 +27,7 @@ ENVFILE=$REPO/cluster/$SITE.env
 [ -f "$ENVFILE" ] || { echo "no $ENVFILE; known sites: $(ls $REPO/cluster/*.env | xargs -n1 basename | sed 's/.env//' | tr '\n' ' ')"; exit 1; }
 source "$ENVFILE"
 WORK=${APPSPECTOR_WORK:-$WORK_DEFAULT}
-BRANCH=${APPSPECTOR_BRANCH:-appspector-delta}
+BRANCH=${APPSPECTOR_BRANCH:-recharm}
 PARTITION=${APPSPECTOR_PARTITION:-$PARTITION_DEFAULT}
 ACCOUNT=${APPSPECTOR_ACCOUNT:-$ACCOUNT_DEFAULT}
 JOBS=${APPSPECTOR_JOBS:-16}
@@ -102,7 +102,7 @@ sbatch_file() {  # name jobname workdir command
 #SBATCH --ntasks=2
 #SBATCH --cpus-per-task=8
 $MEMLINE
-#SBATCH -t 00:30:00
+#SBATCH -t 00:10:00
 #SBATCH -o $WORK/$1-%j.out
 source $WORK/env.sh
 ulimit -c 0
@@ -132,7 +132,7 @@ cores_per_node = $CORES_PER_NODE
 default_nodes = 1
 default_procs_per_node = 2
 default_pes = 4
-walltime = 00:30:00
+walltime = 00:10:00
 mem = $MEM
 launcher = $LAUNCHER
 port = $PORT

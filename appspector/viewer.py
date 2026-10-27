@@ -41,8 +41,8 @@ PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948",
            "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5"]
 PANE_MISSING = {        # why a bottom-pane button is greyed out
     "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
-    "objects": "'by PE' pane off: the program has no LBObjLoads handler (older Charm++ without the LBManager handler)",
-    "grid": "'PE grid' pane off: the program has no LBObjLoads handler (older Charm++ without the LBManager handler)",
+    "objects": "'by PE' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
+    "grid": "'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
 }
 
 OTHER_COLOR = "#999999"
@@ -180,6 +180,7 @@ class Viewer:
         self.intervals = 0
         self.has_ep_stream = False
         self.has_objects = True
+        self.objload_handler = None     # settled by the first successful fetch (objload.fetch_any)
         self.ep_colors = {}
         self.names = perf.read_sts_entries(args.sts) if args.sts else {}
         self.image_q, self.perf_q = queue.Queue(), queue.Queue()
@@ -255,7 +256,8 @@ class Viewer:
         snap = None
         if self.has_objects:
             try:
-                snap = objload.fetch(self.server, timeout=self.args.timeout)
+                snap, self.objload_handler = objload.fetch_any(self.server, self.objload_handler,
+                                                               timeout=self.args.timeout)
             except (ValueError, ccsio.CcsError):
                 self.has_objects = False
         sd = None

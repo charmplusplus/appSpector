@@ -409,13 +409,13 @@ in the shell shows the job output alongside.
 | Feature | What the program needs |
 |---|---|
 | Image pane | linked `-module liveViz` with a liveViz callback |
-| By-PE and PE-grid panes | a Charm++ built from branch `recharm` after 2026-10-23 (PR #4071 LBObjLoads); no flags, no balancer, no trace; the first request turns the load instrumentation on if `+LBOff` had turned it off |
+| By-PE and PE-grid panes | linked `-tracemode utilization` (handler `CkPerfObjLoads`, from the trace events, unaffected by `+LBOff` or `LBTurnInstrumentOff`); without it, any Charm++ built from branch `recharm` after 2026-10-23 (handler `LBObjLoads`, which reports the load-balancing database and is empty while that instrumentation is off) |
 | Over-time pane | linked `-tracemode utilization` (Charm++ built `--enable-tracing`); a greyed-out button means the handler is missing and the status line says so |
 | Inject click | a CCS handler like pfield's `pfieldInject`; other programs need their own, named with `--inject` |
 | Balance button | a balancer linked and selected with `+balancer`, plus a CCS handler that starts an LB step, named with `--balance` |
 
 The CCS handlers behind these are `lvConfig` and `lvImage` (liveViz),
-`LBObjLoads` (the load-balancing manager), and `CkPerfSumDetail
+`CkPerfObjLoads` or `LBObjLoads` (per-object loads), and `CkPerfSumDetail
 compressed` and `CkPerfSumDetail sts` (the utilization trace; the second
 returns the entry-method names).
 
@@ -429,7 +429,7 @@ returns the entry-method names).
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
 | `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
-| `'by PE' pane off: ...` and `'PE grid' pane off: the program has no LBObjLoads handler (older Charm++ without the LBManager handler)` | those buttons are greyed out |
+| `'by PE' pane off: ...` and `'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out |
 | `inject at (x, y): REPLY` | the program's reply to a click |
 | `inject at (x, y): no reply (job has no pfieldInject handler)` | the program has no handler by that name |
 | `balance: REPLY`, `balance: no reply (job has no pfieldBalance handler)` | the same for the Balance button |

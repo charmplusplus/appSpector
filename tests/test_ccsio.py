@@ -313,6 +313,26 @@ class ObjLoadTests(unittest.TestCase):
                 out += struct.pack("<QidB", oid, om, wall, mig)
         return out
 
+    def test_fetch_any_prefers_trace_then_database(self):
+        one = self.snapshot_bytes([(0, 1.0, 0.5, 0.5, [(3, 100, 0.5, 1)])])
+        two = self.snapshot_bytes([(0, 1.0, 0.5, 0.5, [(3, 200, 0.5, 1), (3, 201, 0.1, 1)])])
+        srv = FakeCcsServer()
+        try:
+            s = ccsio.Server("127.0.0.1", srv.port)
+            with self.assertRaises((ValueError, ccsio.CcsError)):
+                objload.fetch_any(s)                       # neither handler
+            srv.register(objload.LB_HANDLER, lambda pe, d: one)
+            snap, h = objload.fetch_any(s)
+            self.assertEqual((h, snap.num_objs), (objload.LB_HANDLER, 1))
+            srv.register(objload.TRACE_HANDLER, lambda pe, d: two)
+            snap, h = objload.fetch_any(s)
+            self.assertEqual((h, snap.num_objs), (objload.TRACE_HANDLER, 2))
+            snap, h = objload.fetch_any(s, h)              # settled: no probing
+            self.assertEqual(h, objload.TRACE_HANDLER)
+            self.assertEqual(srv.requests[-1][0], objload.TRACE_HANDLER)
+        finally:
+            srv.close()
+
     def test_decode_and_diff(self):
         a = objload.decode(self.snapshot_bytes([
             (1, 10.0, 9.0, 1.0, [(7, 100, 2.0, 1)]),

@@ -1,25 +1,42 @@
-"""Per-PE, per-object load snapshots from the load-balancing database
-(CCS handler "LBObjLoads" on PE 0, charm branch lbmanager-objloads-ccs).
+"""Per-PE, per-object load snapshots: which chare ran how long on which PE.
 
-Every Charm++ program has the LB database and it instruments object
-execution time by default (+LBOff turns it off), so this needs no tracing
-build. Reply, in the job's native byte order:
+Two CCS handlers on PE 0 answer in the same layout, and fetch_any() takes
+the first one the job has:
+
+    "CkPerfObjLoads"  from trace-utilization (the job linked -tracemode
+                      utilization): cumulative execution time per array
+                      element from the trace events, independent of the
+                      load-balancing instrumentation, so a program that
+                      switches that instrumentation off (LBTurnInstrumentOff,
+                      +LBOff) is still seen in full.
+    "LBObjLoads"      from the LBManager (any Charm++ built from recharm
+                      after 2026-10-23): whatever the load-balancing
+                      database holds; empty while its instrumentation is off.
+
+Reply, in the job's native byte order:
 
     int32 numPes
     per PE (reduction order; the pe field says which):
         int32 pe, double wallNow, double totalWall, double idleWall, int32 n
         n x { uint64 objId, int32 om, double objWall, uint8 migratable }
 
-The times are cumulative since the last load-balancing step, so the
-useful quantity is the difference between two snapshots: see diff().
-Objects are keyed by (om, objId); the key follows a migrating object.
+The times are cumulative (the trace: since the object was first seen, or
+again since it reappeared after a minute of inactivity; the database:
+since the last load-balancing step), so the useful quantity is the
+difference between two snapshots: see diff(). Objects are keyed by
+(om, objId); the key follows a migrating object.
 """
 
 import struct
+
+from .client import CcsError
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-HANDLER = "LBObjLoads"
+TRACE_HANDLER = "CkPerfObjLoads"
+LB_HANDLER = "LBObjLoads"
+HANDLERS = (TRACE_HANDLER, LB_HANDLER)   # preferred first
+HANDLER = LB_HANDLER                     # the default for fetch()
 ObjKey = Tuple[int, int]      # (om group index, object id)
 
 
@@ -96,8 +113,24 @@ def decode(data, byteorder="<"):
     return Snapshot(pes)
 
 
-def fetch(server, timeout=None):
-    return decode(server.request(HANDLER, 0, timeout=timeout))
+def fetch(server, timeout=None, handler=HANDLER):
+    return decode(server.request(handler, 0, timeout=timeout))
+
+
+def fetch_any(server, handler=None, timeout=None):
+    """Return (snapshot, handler). With handler=None try HANDLERS in order
+    and settle on the first that answers; a job without a handler closes
+    the connection (CcsError) or sends nothing (ValueError). Pass the
+    returned handler back in later calls to skip the probing."""
+    if handler is not None:
+        return fetch(server, timeout, handler), handler
+    err = None
+    for h in HANDLERS:
+        try:
+            return fetch(server, timeout, h), h
+        except (ValueError, CcsError) as e:
+            err = e
+    raise err
 
 
 def diff(prev, cur):

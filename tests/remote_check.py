@@ -52,13 +52,13 @@ try:
 except (ValueError, ccsio.CcsError):
     print("utilization stream: not in this program (no -tracemode utilization)")
 try:
-    a = objload.fetch(s)
+    a, handler = objload.fetch_any(s)
     time.sleep(1)
-    d = objload.diff(a, objload.fetch(s))
-    print("LBObjLoads: %d PEs, %d objects; utilization per PE %s" % (
+    d = objload.diff(a, objload.fetch(s, handler=handler))
+    print("%s: %d PEs, %d objects; utilization per PE %s" % (handler,
         a.num_pes, a.num_objs, {pe: "%.0f%%" % (100 * p.utilization()) for pe, p in sorted(d.pes.items())}))
 except (ValueError, ccsio.CcsError) as e:
-    print("LBObjLoads: not in this build:", e)
+    print("object loads: neither CkPerfObjLoads nor LBObjLoads in this build:", e)
 import argparse
 import tkinter as tk
 from appspector import viewer as V

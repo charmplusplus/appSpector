@@ -163,8 +163,9 @@ service, which is step 6 when it comes.
 2. The launch pane in the viewer window (step 3 above): the form version
    of the shell's site / program / size / run, the job state and log tail
    while it queues, the viewer filling in when the job is up.
-3. Done 2026-10-26 (verified on the laptop and on Anvil: key accepted,
-   no key and wrong key refused, viewer and remote_check authenticated):
+3. Done 2026-10-26 (verified on the laptop, Anvil and, 2026-10-27, Delta:
+   key accepted, no key and wrong key refused, viewer and remote_check
+   authenticated; the 2026-10-26 commit had a heredoc bug, fixed 2026-10-27):
    `++server-auth` keys generated per run and passed to both ends. The
    implementation follows this sketch; `jobs.server(site, job)` is the
    script-side entry, `tests/remote_check.py` takes `-k`. The sketch:

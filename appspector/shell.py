@@ -13,7 +13,7 @@ Shell commands:
     pes N | nodes N | ppn N | walltime HH:MM:SS | port N
     show                                                the spec as it stands
     run [--no-auth]                                     submit; the shell says when the job is up
-    jobs | status [ID] | log [ID] | attach ID | stop [ID]
+    jobs [all] | status [ID] | log [ID] | attach ID | stop [ID]   jobs: live ones; jobs all: ended ones too
     view [ID]                                           open the viewer window on the job
     quit
 """
@@ -249,15 +249,23 @@ Jobs start with ++server-auth and a fresh key by default ('auth = no' in the sit
         self._waiters.append(t)
 
     def do_jobs(self, arg):
-        """jobs: recorded jobs, newest last; jobs not known to have ended are re-checked with the scheduler."""
+        """jobs [all]: live jobs (queued, running, up, or stuck completing), re-checked with the scheduler;
+        'jobs all' also lists the last 15 that ended."""
+        everything = arg.strip() == "all"
+        shown = 0
         for j in J.load_jobs()[-15:]:
             if j.state not in J.TERMINAL:
                 try:
                     J.status(self._site_of(j), j)
                 except (L.LaunchError, KeyError):
                     pass
+            if j.state in J.TERMINAL and not everything:
+                continue
             mark = "*" if self.current and j.id == self.current.id else " "
             self.say("%s %s" % (mark, j.label()))
+            shown += 1
+        if not shown:
+            self.say("no live jobs ('jobs all' lists the last 15, ended ones too)")
 
     def do_status(self, arg):
         """status [ID]: refresh and show a job's state."""
@@ -337,7 +345,7 @@ def one_shot(argv):
     ap = argparse.ArgumentParser(prog="python3 -m appspector", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action", choices=["run", "view", "status", "stop", "jobs", "sites", "script"])
-    ap.add_argument("job", nargs="?", help="job id for view/status/stop")
+    ap.add_argument("job", nargs="?", help="job id for view/status/stop; 'all' for jobs")
     ap.add_argument("--site", default="local")
     ap.add_argument("--program")
     ap.add_argument("--args", default="")
@@ -355,7 +363,7 @@ def one_shot(argv):
         sh.do_sites("")
         return 0
     if a.action == "jobs":
-        sh.do_jobs("")
+        sh.do_jobs(a.job or "")
         return 0
     if a.action in ("view", "status", "stop"):
         if not a.job:

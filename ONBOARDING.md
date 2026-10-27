@@ -124,8 +124,9 @@ puts the key on the cluster and `view` hands it to the viewer. The same
 commands work in one shot:
 `python3 -m appspector run --site delta --program pfield --pes 16 --args
 "-k 16"` submits, waits, and opens the viewer; `python3 -m appspector
-view <id>`, `status <id>`, `stop <id>`, `jobs`, `sites`, and `script`
-(prints the batch script a spec would submit without submitting).
+view <id>`, `status <id>`, `stop <id>`, `jobs` (live jobs; `jobs all`
+includes ended ones), `sites`, and `script` (prints the batch script a
+spec would submit without submitting).
 
 Two programs are set up by `setup-delta.sh`: `pfield`, appSpector's own
 demo (`apps/pfield`, read its README first: cells, pinned particles,

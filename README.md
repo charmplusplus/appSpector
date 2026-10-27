@@ -140,7 +140,9 @@ template and submitted over ssh, or started as a local process. Jobs are
 recorded in `~/.appspector/jobs.json` for `attach`, `view`, `status`,
 `stop` from any later shell. One-shot forms: `python3 -m appspector run
 --site delta --program pfield --pes 16 ...`, `view ID`, `status ID`,
-`stop ID`, `jobs`, `sites`, `script`. Interaction with the running
+`stop ID`, `jobs`, `sites`, `script`. `jobs` lists live jobs only (queued,
+running, up, or stuck completing), after asking the scheduler about each;
+`jobs all` adds the last 15 that ended. Interaction with the running
 program stays in the viewer.
 
 Since 2026-10-26 every job runs with `++server-auth`: `run` draws a

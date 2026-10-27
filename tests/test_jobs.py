@@ -220,6 +220,38 @@ class AuthTests(unittest.TestCase):
         finally:
             J.JOBS_FILE = old
 
+    def test_jobs_lists_live_only_unless_all(self):
+        from appspector.shell import Shell
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "cluster.ini")
+        with open(path, "w") as f:
+            f.write(SITE_INI)
+        old = J.JOBS_FILE
+        J.JOBS_FILE = os.path.join(tmp, "jobs.json")
+        try:
+            mk = lambda i, st: J.Job(id=i, site="cluster", program="pfield", args="", pes=4, port=1234, out="/o",
+                                     submitted=float(i), state=st)
+            J.save_jobs([mk("1", "completed"), mk("2", "cancelled"), mk("3", "completing"), mk("4", "up")])
+            sh = Shell(path)
+            out = []
+            sh.say = out.append
+            J_status = J.status
+            J.status = lambda site, job: job.state           # no scheduler in a test
+            try:
+                sh.do_jobs("")
+                self.assertEqual([l.split()[0] for l in out], ["3", "4"])
+                del out[:]
+                sh.do_jobs("all")
+                self.assertEqual([l.split()[0] for l in out], ["1", "2", "3", "4"])
+                del out[:]
+                J.save_jobs([mk("1", "completed")])
+                sh.do_jobs("")
+                self.assertIn("no live jobs", out[0])
+            finally:
+                J.status = J_status
+        finally:
+            J.JOBS_FILE = old
+
     def test_view_passes_key(self):
         import subprocess
         from appspector.shell import Shell

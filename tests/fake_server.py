@@ -6,6 +6,7 @@ order, which is what CcsMerge_concat does."""
 import socket
 import struct
 import threading
+import time
 
 from ccsio import protocol as P
 
@@ -21,13 +22,14 @@ def _recv_exactly(sock, n):
 
 
 class FakeCcsServer:
-    def __init__(self, node_sizes=(2, 2), key=None, close_on_unknown=False):
+    def __init__(self, node_sizes=(2, 2), key=None, close_on_unknown=False, handle_delay=0.0):
         self.node_sizes = list(node_sizes)
         self.key = key
         self.close_on_unknown = close_on_unknown   # reconverse closes, classic sends 0 bytes
         self.handlers = {}
         self.requests = []            # (handler, pe, data) seen, for asserts
         self._clients = []            # per client id: next expected salt
+        self.handle_delay = handle_delay  # random pause per connection: requests overtake each other
         self._lock = threading.Lock()
         self._sock = socket.socket()
         self._sock.bind(("127.0.0.1", 0))
@@ -67,6 +69,9 @@ class FakeCcsServer:
                              daemon=True).start()
 
     def _handle(self, conn):
+        if self.handle_delay:
+            import random
+            time.sleep(random.uniform(0, self.handle_delay))
         try:
             first = _recv_exactly(conn, 4)
             reply_prefix = b""
@@ -82,9 +87,9 @@ class FakeCcsServer:
                 header = _recv_exactly(conn, P.HEADER_LEN)
                 with self._lock:
                     salt = self._clients[client_id]
+                    if given != P.auth_hash(self.key, salt, header):
+                        return            # like ccs-server.cpp: close, counter NOT advanced
                     self._clients[client_id] = (salt + 1) & 0xFFFFFFFF
-                if given != P.auth_hash(self.key, salt, header):
-                    return
                 reply_prefix = P.auth_hash(self.key, reply_salt)
             else:
                 if self.key is not None:

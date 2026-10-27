@@ -29,6 +29,18 @@ s.request("ping", [1, 3], b"x")                  # multicast
 s.send("fire", 2, b"")  .close()                 # one-way, no reply wanted
 
 s = ccsio.Server(host, port, key="0102...")      # job started with ++server-auth
+```
+
+A `Server` may be shared between threads. With a key, the CCS server keeps
+one request counter per authenticated client and rejects a request whose
+hash used the wrong counter value, so requests from one identity must
+arrive in order; over an ssh forward two threads' requests overtake each
+other within a second (found 2026-10-27: the Delta viewer froze with "the
+job is gone" while the job ran on). ccsio therefore gives each thread its
+own identity on its first request, and `request()` re-authenticates and
+retries once when the server drops a connection before any reply byte.
+
+```python
 
 from ccsio import liveviz, perf
 cfg = liveviz.get_config(s)                      # lvConfig

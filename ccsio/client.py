@@ -3,6 +3,7 @@
 import secrets
 import socket
 import struct
+import threading
 
 from . import protocol as P
 
@@ -83,6 +84,15 @@ class Server:
     merged by the handler's merge function), or a list of PEs (multicast).
     ``send`` returns the Pending request instead, for one-way requests or
     for overlapping several requests.
+
+    Threads: a Server may be shared between threads. With a key, the server
+    keeps one request counter per authenticated client and rejects a
+    request whose hash was made with the wrong counter value, so requests
+    from one identity must reach it in order. Each thread therefore gets
+    its own identity (client id and counter), created on its first request,
+    and ``request`` re-authenticates and retries once when the server
+    drops the connection before any reply byte (the counter had fallen out of
+    step, e.g. after a lost request).
     """
 
     def __init__(self, host, port, key=None, timeout=60.0, connect=True):
@@ -93,11 +103,19 @@ class Server:
             key = P.parse_key(key)
         self.key = bytes(key) if key is not None else None
         self.level = 0
-        self.client_id = 0
-        self.client_salt = 0
+        self._ident = threading.local()     # per thread: client_id, client_salt
         self.node_sizes = []
         if connect:
             self.connect()
+
+    @property
+    def client_id(self):
+        """This thread's client number with the server (None before its first request)."""
+        return getattr(self._ident, "client_id", None)
+
+    @property
+    def client_salt(self):
+        return getattr(self._ident, "client_salt", None)
 
     @classmethod
     def from_output(cls, text, **kw):
@@ -145,7 +163,7 @@ class Server:
                 raise CcsError("server does not accept our key")
             if reply[:P.HASH_LEN] != P.auth_hash(self.key, s1):
                 raise CcsError("server's key does not match ours")
-            self.client_id, self.client_salt = struct.unpack(
+            self._ident.client_id, self._ident.client_salt = struct.unpack(
                 "!iI", reply[P.HASH_LEN:])
         finally:
             sock.close()
@@ -183,12 +201,14 @@ class Server:
         parts = []
         reply_salt = 0
         if self.key is not None:
+            if not hasattr(self._ident, "client_id"):
+                self._authenticate()        # this thread's own identity
             reply_salt = _rand32()
             parts.append(bytes([P.AUTH_SHA1, P.AUTH_VERSION,
                                 P.AUTH_ORDINARY, self.level])
-                         + struct.pack("!iI", self.client_id, reply_salt)
-                         + P.auth_hash(self.key, self.client_salt, header))
-            self.client_salt = (self.client_salt + 1) & 0xFFFFFFFF
+                         + struct.pack("!iI", self._ident.client_id, reply_salt)
+                         + P.auth_hash(self.key, self._ident.client_salt, header))
+            self._ident.client_salt = (self._ident.client_salt + 1) & 0xFFFFFFFF
         parts.append(header)
         if pes is not None:
             parts.append(struct.pack("!%di" % len(pes), *pes))
@@ -203,8 +223,18 @@ class Server:
 
     def request(self, handler, pe=0, data=b"", timeout=None):
         """Send a request and return the reply bytes."""
-        return self.send(handler, pe, data).recv(
-            self.timeout if timeout is None else timeout)
+        t = self.timeout if timeout is None else timeout
+        try:
+            return self.send(handler, pe, data).recv(t)
+        except CcsError as e:
+            if self.key is None or "after 0 of" not in str(e):
+                raise                       # a real failure, or a reply was under way
+            # The server closed without a reply: with a key that means it
+            # rejected the hash because this identity's counter is out of
+            # step with its own (a lost request, or an identity made before
+            # a server restart). A new identity puts both back in step.
+            self._authenticate()
+            return self.send(handler, pe, data).recv(t)
 
     def __repr__(self):
         return "Server(%s:%d, %d nodes, %d PEs%s)" % (

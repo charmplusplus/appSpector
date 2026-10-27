@@ -165,6 +165,38 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(s2.request("ping", ccsio.BROADCAST, b"b"), b"pe0:bpe1:b")
         self.assertEqual(s.request("ping", 0, b"again"), b"pe0:again")
 
+    def test_threads_get_their_own_identity(self):
+        """Two threads sharing one Server, with the server handling connections
+        in random order: no rejection, because each thread has its own client
+        number and counter (the 2026-10-27 Delta viewer freeze)."""
+        import threading
+        self.srv.handle_delay = 0.01
+        s = ccsio.Server("127.0.0.1", self.srv.port, key=self.KEY, timeout=5)
+        errors, seen = [], []
+
+        def worker(tag):
+            for i in range(25):
+                try:
+                    self.assertEqual(s.request("ping", 0, b"%s%d" % (tag, i)), b"pe0:%s%d" % (tag, i))
+                except Exception as e:
+                    errors.append(e)
+            seen.append(s.client_id)
+        ts = [threading.Thread(target=worker, args=(b"a",)), threading.Thread(target=worker, args=(b"b",))]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(seen + [s.client_id]), [0, 1, 2])     # main thread and the two workers
+
+    def test_recovery_after_rejection(self):
+        """A counter out of step (a request the server never saw) is rejected
+        once; request() takes a new identity and the request goes through."""
+        s = ccsio.Server("127.0.0.1", self.srv.port, key=self.KEY, timeout=5)
+        self.assertEqual(s.client_id, 0)
+        s._ident.client_salt = (s._ident.client_salt + 1) & 0xFFFFFFFF   # as if one request was lost
+        self.assertEqual(s.request("ping", 1, b"x"), b"pe1:x")
+        self.assertEqual(s.client_id, 1)                                 # a fresh identity
+        self.assertEqual(s.request("ping", 1, b"y"), b"pe1:y")           # and it stays in step
+
     def test_wrong_key_rejected(self):
         with self.assertRaises(ccsio.CcsError):
             ccsio.Server("127.0.0.1", self.srv.port, key="99" * 16, timeout=5)

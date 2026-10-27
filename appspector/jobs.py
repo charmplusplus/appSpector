@@ -208,6 +208,23 @@ def render_batch(site, spec, jobname="appspector", stamp=None):
     return script, out, v
 
 
+def remote_write_command(work, script_path, script, keyfile="", key=""):
+    """The shell command that puts the batch script (and the key file) on
+    the cluster. One line per command and each heredoc terminator on a line
+    of its own: a terminator followed by '&&' is not a terminator, and the
+    heredoc then swallows the rest of the command (that bug shipped on
+    2026-10-26). set -e makes a failed step fail the ssh call."""
+    lines = ["set -e", "mkdir -p %s/jobs" % work]
+    if key:
+        # the key file goes in before the batch script is submitted. Created
+        # empty, then chmod 600, then written: a umask does not help on a
+        # directory with a default ACL (Anvil's project space), chmod does.
+        lines += ["touch %s" % keyfile, "chmod 600 %s" % keyfile,
+                  "cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (keyfile, key_file_text(key))]
+    lines.append("cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (script_path, script))
+    return "\n".join(lines) + "\n"
+
+
 def start(site, spec, log=print):
     """Submit (slurm) or launch (local). Returns the recorded Job."""
     if site.scheduler == "local":
@@ -221,16 +238,7 @@ def start(site, spec, log=print):
     script, out_tmpl, v = render_batch(site, spec, jobname="as-" + (spec.program or "job")[:12], stamp=stamp)
     remote_script = "%s/jobs/%s-%s.sbatch" % (site.work, spec.program or "job", stamp)
     key = new_key() if v["keyfile"] else ""
-    parts = ["mkdir -p %s/jobs" % site.work]
-    if key:
-        # the key file goes in before the batch script is submitted. Created
-        # empty, then chmod 600, then written: a umask does not help on a
-        # directory with a default ACL (Anvil's project space), chmod does.
-        kf = v["keyfile"]
-        parts.append("touch %s && chmod 600 %s && cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF"
-                     % (kf, kf, kf, key_file_text(key)))
-    parts.append("cat > %s <<'APPSPECTOR_EOF'\n%sAPPSPECTOR_EOF" % (remote_script, script))
-    L.ssh(site.ssh, " && ".join(parts))
+    L.ssh(site.ssh, remote_write_command(site.work, remote_script, script, v["keyfile"], key))
     job_id = L.submit(site.ssh, remote_script)
     job = Job(id=job_id, site=site.name, program=spec.program or spec.command, args=spec.args, pes=v["pes"],
               port=v["port"], out=out_tmpl.replace("%j", job_id), submitted=time.time(), script=remote_script,

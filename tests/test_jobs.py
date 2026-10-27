@@ -154,9 +154,9 @@ class AuthTests(unittest.TestCase):
             self.assertEqual(job.id, "4242")
             self.assertEqual(len(job.key), 32)
             cmd = sent[0]
-            keyfile = cmd.split("touch ")[1].split(" ")[0]
+            keyfile = cmd.split("touch ")[1].split("\n")[0]
             self.assertTrue(keyfile.startswith("/work/alloc/me/appspector/jobs/pfield-") and keyfile.endswith(".key"))
-            self.assertIn("mkdir -p /work/alloc/me/appspector/jobs && touch %s && chmod 600 %s && cat > %s <<'APPSPECTOR_EOF'\n0 %s\nAPPSPECTOR_EOF && cat > /work/alloc/me/appspector/jobs/pfield-"
+            self.assertIn("set -e\nmkdir -p /work/alloc/me/appspector/jobs\ntouch %s\nchmod 600 %s\ncat > %s <<'APPSPECTOR_EOF'\n0 %s\nAPPSPECTOR_EOF\ncat > /work/alloc/me/appspector/jobs/pfield-"
                           % (keyfile, keyfile, keyfile, job.key), cmd)
             self.assertIn("++server-auth %s\n" % keyfile, cmd)        # the batch script names the same file
             self.assertEqual(J.find_job("4242").key, job.key)          # the record keeps the key
@@ -170,6 +170,29 @@ class AuthTests(unittest.TestCase):
             self.assertNotIn("++server-auth", sent[0])
         finally:
             L.reachable, L.ssh, L.submit, J.JOBS_FILE = saved
+
+    def test_remote_write_command_through_bash(self):
+        """The command the launcher sends over ssh, run by a real bash: both
+        files land with the right contents (the 2026-10-26 bug put the batch
+        script inside the key file)."""
+        import subprocess
+        work = tempfile.mkdtemp()
+        script = "#!/bin/bash\n#SBATCH -J x\n./prog ++server-auth %s/jobs/k.key\n" % work
+        cmd = J.remote_write_command(work, work + "/jobs/s.sbatch", script, work + "/jobs/k.key", "12" * 16)
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(work + "/jobs/k.key") as f:
+            self.assertEqual(f.read(), "0 %s\n" % ("12" * 16))
+        self.assertEqual(oct(os.stat(work + "/jobs/k.key").st_mode & 0o777), "0o600")
+        with open(work + "/jobs/s.sbatch") as f:
+            self.assertEqual(f.read(), script)
+        # without a key: only the script
+        cmd = J.remote_write_command(work, work + "/jobs/t.sbatch", script)
+        self.assertEqual(subprocess.run(["bash", "-c", cmd]).returncode, 0)
+        self.assertTrue(os.path.exists(work + "/jobs/t.sbatch"))
+        # a failing step fails the whole command
+        cmd = J.remote_write_command("/nonexistent-root/x", "/nonexistent-root/x/jobs/s", script)
+        self.assertNotEqual(subprocess.run(["bash", "-c", cmd], capture_output=True).returncode, 0)
 
     def test_local_start_writes_key_file(self):
         tmp = tempfile.mkdtemp()

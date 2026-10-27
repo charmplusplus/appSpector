@@ -39,6 +39,12 @@ from ccsio import liveviz, objload, perf
 PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948",
            "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac", "#1f77b4", "#aec7e8",
            "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5"]
+PANE_MISSING = {        # why a bottom-pane button is greyed out
+    "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
+    "objects": "'by PE' pane off: the program has no LBObjLoads handler (older Charm++ without the LBManager handler)",
+    "grid": "'PE grid' pane off: the program has no LBObjLoads handler (older Charm++ without the LBManager handler)",
+}
+
 OTHER_COLOR = "#999999"
 IDLE_COLOR = "#f0f0f0"
 
@@ -321,6 +327,7 @@ class Viewer:
         for name, ok in (("ep", self.has_ep_stream), ("objects", self.has_objects), ("grid", self.has_objects)):
             if not ok and str(self.view_buttons[name].cget("state")) != "disabled":
                 self.view_buttons[name].configure(state="disabled")
+                self.status.set(PANE_MISSING[name])
                 if self.view.get() == name:
                     self.view.set("objects" if name == "ep" else "ep")
         self.redraw_bottom()

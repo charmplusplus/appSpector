@@ -2,7 +2,7 @@
 
 Where the tool is going and how its parts fit, so that new programs,
 new machines and new front ends can be connected without reworking it.
-Status and history are in README.md; the original idea is in
+Status and history are in docs/HISTORY.md; the original idea is in
 INITIAL-THOUGHTS.md.
 
 ## The shape

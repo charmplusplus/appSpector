@@ -43,6 +43,7 @@ PANE_MISSING = {        # why a bottom-pane button is greyed out
     "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
     "objects": "'by PE' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "grid": "'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
+    "objects+grid": "'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
 }
 
 NOTICE_SECONDS = 4.5   # how long a notice holds the status line against routine updates
@@ -119,8 +120,9 @@ class StatusLine:
     job is gone, a request failed) or the connect message: it shows at
     once and ends any notice, since a dead job matters more than an older
     reply and no frames will follow to replace it anyway; it is not held,
-    so a one-off timeout gives way to the next frame as before. var is anything with
-    set(text), a tk.StringVar in the viewer; clock is for the tests."""
+    so a one-off timeout gives way to the next frame as before. var is
+    anything with set(text), a tk.StringVar in the viewer; clock is for
+    the tests."""
 
     def __init__(self, var, hold=NOTICE_SECONDS, clock=time.monotonic):
         self.var, self.hold, self.clock = var, hold, clock
@@ -223,7 +225,7 @@ class Viewer:
         self.frames = 0
         self.empty_perf = 0
         threading.Thread(target=self.connect, daemon=True).start()
-        root.after(50, self.drain)
+        self.drain_id = root.after(50, self.drain)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
     # -- connection and pollers (worker threads) ---------------------------
@@ -327,7 +329,7 @@ class Viewer:
                 self.add_perf(self.perf_q.get_nowait())
         except queue.Empty:
             pass
-        self.root.after(50, self.drain)
+        self.drain_id = self.root.after(50, self.drain)
 
     def describe(self, what, e):
         if "refused" in str(e) or "closed" in str(e) or "lost" in str(e):
@@ -363,12 +365,17 @@ class Viewer:
             self.columns.append(column_from_sumdetail(sd))
         elif snap is None:
             self.empty_perf += 1
+        off = []
         for name, ok in (("ep", self.has_ep_stream), ("objects", self.has_objects), ("grid", self.has_objects)):
             if not ok and str(self.view_buttons[name].cget("state")) != "disabled":
                 self.view_buttons[name].configure(state="disabled")
-                self.status_line.notice(PANE_MISSING[name])
+                off.append(name)
                 if self.view.get() == name:
                     self.view.set("objects" if name == "ep" else "ep")
+        if off:             # one notice: a second one would replace the first at once
+            if "objects" in off and "grid" in off:
+                off = [n for n in off if n not in ("objects", "grid")] + ["objects+grid"]
+            self.status_line.notice("; ".join(PANE_MISSING[n] for n in off))
         self.redraw_bottom()
 
     def redraw_bottom(self):
@@ -529,6 +536,7 @@ class Viewer:
             if p is not None:
                 p.fn = None
                 p.join(timeout=2.0)
+        self.root.after_cancel(self.drain_id)     # else Tcl complains about a dead drain at exit
         self.root.destroy()
 
 

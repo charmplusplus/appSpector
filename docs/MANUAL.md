@@ -429,7 +429,7 @@ returns the entry-method names).
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
 | `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
-| `'by PE' pane off: ...` and `'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out |
+| `'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out; when several panes go off at once, their messages share one line, separated by `;` |
 | `inject at (x, y): sent, waiting for the reply ...` | the click was sent; if nothing replaces it, the program has not answered (yet) |
 | `inject at (x, y): REPLY` | the program's reply to a click |
 | `inject at (x, y): no reply (job has no pfieldInject handler)` | the program has no handler by that name |

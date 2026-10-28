@@ -192,22 +192,26 @@ class InteractionTest(unittest.TestCase):
             root = tk.Tk()
             root.withdraw()
             v = V.Viewer(root, args)
+            v.status_line.hold = 60.0      # longer than the test, however slow the box
             deadline = time.time() + 5
             while time.time() < deadline and v.server is None:
                 root.update()
                 time.sleep(0.02)
             # let the missing ep stream switch its pane off first: that is a notice too
+            deadline = time.time() + 5
             while time.time() < deadline and str(v.view_buttons["ep"].cget("state")) != "disabled":
                 root.update()
                 time.sleep(0.02)
             class Ev: x, y = 50, 25
             v.on_image_click(Ev())
             self.assertEqual(v.status.get(), "inject at (0.25, 0.25): sent, waiting for the reply ...")
+            deadline = time.time() + 5
             while time.time() < deadline and "injected" not in v.status.get():
                 root.update()
                 time.sleep(0.02)
             # the reply stays on the status line while frames keep arriving
             frames = v.frames
+            deadline = time.time() + 5
             while time.time() < deadline and v.frames < frames + 3:
                 root.update()
                 time.sleep(0.02)

@@ -430,10 +430,19 @@ returns the entry-method names).
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
 | `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
 | `'by PE' pane off: ...` and `'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out |
+| `inject at (x, y): sent, waiting for the reply ...` | the click was sent; if nothing replaces it, the program has not answered (yet) |
 | `inject at (x, y): REPLY` | the program's reply to a click |
 | `inject at (x, y): no reply (job has no pfieldInject handler)` | the program has no handler by that name |
 | `balance: REPLY`, `balance: no reply (job has no pfieldBalance handler)` | the same for the Balance button |
 | `inject ... failed: ...`, `balance failed: ...`, `balance: not connected` | the request could not be sent |
+
+The frame line is rewritten with every image, five times a second, so
+anything else would vanish before it could be read. The replies to a
+click or to Balance (and their `sent`, `failed` and `not connected`
+lines) and the pane-off messages therefore hold the status line for 4.5
+seconds; frames keep arriving meanwhile, and the frame line comes back
+after that. An `image: ...` or `perf: ...` error is shown at once, even
+over a held message.
 
 The caption inside the bottom pane gives the PE and chare counts, the
 interval and the busiest PE.

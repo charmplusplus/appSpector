@@ -373,12 +373,13 @@ The viewer never has more than one image request out, and it does not
 flood a slow job or link: after each request it waits until the
 interval is up, and at least as long as requests have been taking
 lately (a running average), but never more than 5 s. A request that
-takes 2 s is followed by about 2 s of quiet, so the job and the link are
-kept busy at most half the time; when requests get fast again the
-viewer is back at the full rate after a few of them. The load and
-utilization requests follow the same rule with their own interval.
-`--fixed-rate` turns the backoff off. Clicks and the Balance button go
-out on their own connection at once; they never wait for an image.
+takes 2 s is followed by about 2 s of quiet, so for requests under 5 s
+the job and the link are kept busy at most half the time; when requests
+get fast again the viewer is back at the full rate after a few of them.
+The load and utilization requests follow the same rule with their own
+interval. `--fixed-rate` turns the backoff off. Clicks and the Balance
+button go out on their own connection at once; they never wait for an
+image.
 
 A click in the image sends an inject request to the program: the click's
 x and y as fractions of the image, a blob width (`--inject-sigma`, 0.03

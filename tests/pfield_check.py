@@ -31,7 +31,7 @@ else:
 try:
     args = argparse.Namespace(host=host, port=port, key=None, size=(600, 600), image_ms=200, perf_ms=1000,
                               sts=None, no_image=False, no_perf=False, timeout=20.0, pane="objects",
-                              inject="pfieldInject", inject_count=3000, inject_sigma=0.03, balance="pfieldBalance", fixed_rate=False)
+                              inject="pfieldInject", inject_count=3000, inject_sigma=0.03, balance="pfieldBalance")
     root = tk.Tk()
     root.withdraw()
     v = V.Viewer(root, args)

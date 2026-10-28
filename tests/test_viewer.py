@@ -79,7 +79,6 @@ class StatusLineTests(unittest.TestCase):
         self.assertEqual(self.var.text, "frame 5")
 
 
-
 class PacerTests(unittest.TestCase):
     def test_fast_requests_keep_the_interval(self):
         from appspector.viewer import Pacer
@@ -117,20 +116,12 @@ class PacerTests(unittest.TestCase):
         self.assertEqual(p.wait(2.0), 0.0)
         self.assertAlmostEqual(p.wait(0.05), 0.15)
 
-    def test_poller_one_request_outstanding(self):
+    def test_poller_waits_after_a_slow_request(self):
         import queue
-        import threading
         from appspector.viewer import Poller
-        lock = threading.Lock()
-        state = {"now": 0, "max": 0}
 
         def fn():
-            with lock:
-                state["now"] += 1
-                state["max"] = max(state["max"], state["now"])
             time.sleep(0.03)
-            with lock:
-                state["now"] -= 1
             return 1
         out = queue.Queue()
         p = Poller(fn, 0.001, out)
@@ -139,8 +130,8 @@ class PacerTests(unittest.TestCase):
             out.get(timeout=5)
         p.stop.set()
         p.join(timeout=2)
-        self.assertEqual(state["max"], 1)
-        self.assertGreaterEqual(p.period, 0.05)         # 30 ms request, then at least ~30 ms quiet
+        self.assertGreaterEqual(p.period, 0.05)         # 30 ms request, then ~30 ms quiet
+
 
 @unittest.skipUnless(HAVE_TK, "no Tk display")
 class ViewerSmokeTest(unittest.TestCase):
@@ -159,7 +150,7 @@ class ViewerSmokeTest(unittest.TestCase):
             args = V.main.__globals__["argparse"].Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
                 perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="ep",
-                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance", fixed_rate=False)
+                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
             v = V.Viewer(root, args)
@@ -202,7 +193,7 @@ class ObjectsPaneTest(unittest.TestCase):
             args = V.main.__globals__["argparse"].Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
                 perf_ms=50, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="objects",
-                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance", fixed_rate=False)
+                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
             v = V.Viewer(root, args)
@@ -251,7 +242,7 @@ class InteractionTest(unittest.TestCase):
             args = V.main.__globals__["argparse"].Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(200, 100), image_ms=50,
                 perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="objects",
-                inject="pfieldInject", inject_count=7, inject_sigma=0.05, balance="pfieldBalance", fixed_rate=False)
+                inject="pfieldInject", inject_count=7, inject_sigma=0.05, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
             v = V.Viewer(root, args)

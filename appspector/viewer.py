@@ -151,10 +151,10 @@ class Pacer:
     asks. The smoothed latency (an EWMA, weight alpha on the newest
     request, seeded with the first) is the backoff: after each request the
     viewer stays quiet for at least as long as requests have been taking,
-    so it keeps a slow job or link busy at most half the time instead of
-    back to back. Fast requests leave the plain fixed rate; when they speed
-    up again the smoothed latency falls within a few requests and the rate
-    recovers. max_wait keeps a very slow pane refreshing. adaptive=False
+    so for requests under max_wait it keeps a slow job or link busy at most
+    half the time instead of back to back. Fast requests leave the plain
+    fixed rate; when they speed up again the smoothed latency falls within
+    a few requests and the rate recovers. max_wait keeps a very slow pane refreshing. adaptive=False
     (--fixed-rate) is the plain interval - latency."""
 
     def __init__(self, interval, adaptive=True, alpha=0.3, max_wait=5.0):
@@ -277,7 +277,7 @@ class Viewer:
                 msg += "; liveViz %s%s" % ("color" if self.config.is_color else "grey",
                                            ", push" if self.config.is_push else "")
                 self.image_poller = Poller(self.fetch_image, self.args.image_ms / 1000.0, self.image_q,
-                                           adaptive=not self.args.fixed_rate)
+                                           adaptive=not getattr(self.args, "fixed_rate", False))
                 self.image_poller.start()
             if not self.args.no_perf:
                 if not self.names:
@@ -288,7 +288,7 @@ class Viewer:
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,
-                                          adaptive=not self.args.fixed_rate)
+                                          adaptive=not getattr(self.args, "fixed_rate", False))
                 self.perf_poller.start()
             self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:

@@ -1,14 +1,15 @@
 """A first split-screen viewer, tkinter only.
 
     python -m appspector.viewer HOST PORT [-k KEY] [--size WxH]
-                               [--image-ms 200] [--perf-ms 1000]
+                               [--image-ms 200] [--perf-ms 1000] [--fixed-rate]
                                [--sts prog.util.sts] [--no-image] [--no-perf]
                                [--inject HANDLER] [--balance HANDLER]
 
 Top pane: the job's liveViz image (handlers lvConfig / lvImage), polled on a
-timer. Bottom pane (default, --pane objects): a snapshot that changes once
-a second, one bar per PE whose height is the PE's utilization in the last
-interval, stacked from the time each chare ran, every chare in its own
+timer that backs off while requests are slow (see Pacer). Bottom pane
+(default, --pane objects): a snapshot that changes once a second, one
+bar per PE whose height is the PE's utilization in the last interval,
+stacked from the time each chare ran, every chare in its own
 color (handler "LBObjLoads", any Charm++ program). --pane ep instead
 shows one stacked column per second of utilization by entry method,
 scrolling left (handler "CkPerfSumDetail compressed", needs -tracemode
@@ -142,14 +143,48 @@ class StatusLine:
         self.var.set(text)
 
 
-class Poller(threading.Thread):
-    """Calls fn() every interval seconds and queues (result or exception)."""
+class Pacer:
+    """When a poller asks next, given how long its last request took.
 
-    def __init__(self, fn, interval, out):
+    The rule: wait max(interval - latency, smoothed latency), at most
+    max_wait. interval (--image-ms, --perf-ms) is the fastest the viewer
+    asks. The smoothed latency (an EWMA, weight alpha on the newest
+    request, seeded with the first) is the backoff: after each request the
+    viewer stays quiet for at least as long as requests have been taking,
+    so it keeps a slow job or link busy at most half the time instead of
+    back to back. Fast requests leave the plain fixed rate; when they speed
+    up again the smoothed latency falls within a few requests and the rate
+    recovers. max_wait keeps a very slow pane refreshing. adaptive=False
+    (--fixed-rate) is the plain interval - latency."""
+
+    def __init__(self, interval, adaptive=True, alpha=0.3, max_wait=5.0):
+        self.interval, self.adaptive = interval, adaptive
+        self.alpha, self.max_wait = alpha, max(max_wait, interval)
+        self.smoothed = None
+
+    def wait(self, latency):
+        if self.smoothed is None:
+            self.smoothed = latency
+        else:
+            self.smoothed += self.alpha * (latency - self.smoothed)
+        w = max(0.0, self.interval - latency)
+        if self.adaptive:
+            w = min(max(w, self.smoothed), self.max_wait)
+        return w
+
+
+class Poller(threading.Thread):
+    """Calls fn() over and over on one thread, so one request of its kind
+    is outstanding at a time, waiting between calls as Pacer says, and
+    queues (result or exception)."""
+
+    def __init__(self, fn, interval, out, adaptive=True):
         super().__init__(daemon=True)
         self.fn, self.interval, self.out = fn, interval, out
+        self.pacer = Pacer(interval, adaptive)
         self.stop = threading.Event()
         self.latency = 0.0
+        self.period = interval          # last request plus the wait after it
 
     def run(self):
         while not self.stop.is_set():
@@ -159,8 +194,10 @@ class Poller(threading.Thread):
             except Exception as e:          # report, keep polling
                 r = e
             self.latency = time.monotonic() - t0
+            wait = self.pacer.wait(self.latency)
+            self.period = self.latency + wait
             self.out.put(r)
-            self.stop.wait(max(0.0, self.interval - self.latency))
+            self.stop.wait(wait)
 
 
 class Viewer:
@@ -239,7 +276,8 @@ class Viewer:
                 self.config = liveviz.get_config(self.server)
                 msg += "; liveViz %s%s" % ("color" if self.config.is_color else "grey",
                                            ", push" if self.config.is_push else "")
-                self.image_poller = Poller(self.fetch_image, self.args.image_ms / 1000.0, self.image_q)
+                self.image_poller = Poller(self.fetch_image, self.args.image_ms / 1000.0, self.image_q,
+                                           adaptive=not self.args.fixed_rate)
                 self.image_poller.start()
             if not self.args.no_perf:
                 if not self.names:
@@ -249,7 +287,8 @@ class Viewer:
                         self.names = {}
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
-                self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q)
+                self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,
+                                          adaptive=not self.args.fixed_rate)
                 self.perf_poller.start()
             self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:
@@ -260,7 +299,9 @@ class Viewer:
     def _oneway(self, handler, data, what):
         """A request on its own short thread; "sent" and then the reply go to
         the status line as notices, so a click that gets no answer reads
-        differently from a click that never happened."""
+        differently from a click that never happened. Its own thread means
+        its own CCS identity and connection, so it does not wait for an
+        image or perf request in flight, nor for a poller's pause."""
         def run():
             try:
                 reply = self.server.request(handler, 0, data, timeout=self.args.timeout)
@@ -344,8 +385,9 @@ class Viewer:
         self.photo = tk_photo_from_image(r, master=self.root)
         self.image_canvas.delete("all")
         self.image_canvas.create_image(0, 0, anchor="nw", image=self.photo)
-        self.status_line.routine("frame %d  %dx%d  %.0f ms/request" % (
-            self.frames, r.width, r.height, 1000 * self.image_poller.latency))
+        self.status_line.routine("frame %d  %dx%d  %.0f ms/request, every %.0f ms" % (
+            self.frames, r.width, r.height, 1000 * self.image_poller.latency,
+            1000 * self.image_poller.period))
 
     def add_perf(self, r):
         if isinstance(r, Exception):
@@ -552,8 +594,10 @@ def main(argv=None):
     ap.add_argument("port", type=int)
     ap.add_argument("-k", "--key")
     ap.add_argument("--size", type=parse_size, default=(600, 400), help="initial image pane size, WxH")
-    ap.add_argument("--image-ms", type=int, default=200, help="image poll interval")
-    ap.add_argument("--perf-ms", type=int, default=1000, help="utilization poll interval")
+    ap.add_argument("--image-ms", type=int, default=200, help="shortest image poll interval")
+    ap.add_argument("--perf-ms", type=int, default=1000, help="shortest utilization poll interval")
+    ap.add_argument("--fixed-rate", action="store_true",
+                    help="poll at --image-ms/--perf-ms even when requests are slow (no backoff)")
     ap.add_argument("--pane", choices=["objects", "ep", "grid"], default="objects",
                     help="initial bottom view: per-PE bars stacked by chare (default) or utilization by entry "
                          "method over time; radio buttons in the window flip between them")

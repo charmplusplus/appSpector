@@ -12,14 +12,22 @@ width, int32 height, and with client version 2 also int32 compression
 type (0 none, 1 JPEG) and int32 JPEG quality. A 3d client appends the
 view: screen axes x, y, z and origin o as four 3-vectors of doubles, then
 minZ and maxZ. Reply: width*height pixels, 1 byte (greyscale) or 3 bytes
-(RGB) each, rows top to bottom, no header.
+(RGB) each, rows top to bottom, no header. With compression 1 the reply is
+instead a bare JPEG (JFIF) stream of the same image, greyscale or RGB, made
+by libjpeg at the requested quality (liveViz0.C, JPEGcompressImage). Only
+a Charm++ whose configure found libjpeg (CMK_USE_LIBJPEG) can do that; any
+other answers a JPEG request like an unknown compression type, with an
+empty reply, which reconverse delivers as a closed connection.
 """
 
+import io
 import struct
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 Vec3 = Tuple[float, float, float]
+
+COMPRESS_NONE, COMPRESS_JPEG = 0, 1     # liveVizRequest::compressionType
 
 
 @dataclass
@@ -65,6 +73,7 @@ class Image:
     height: int
     channels: int
     pixels: bytes = field(repr=False)
+    wire_bytes: int = 0         # size of the reply as sent (JPEG or raw)
 
     def to_pil(self):
         """A Pillow image (mode L or RGB); Pillow is imported on demand."""
@@ -78,7 +87,10 @@ def pack_request(width, height, code=1, version=1, compression=0,
                  quality=0, view3d=None):
     """The lvImage request payload. version 1 is what the Java client
     sends and what every server accepts; version 2 adds the compression
-    fields (the server reads them only if the client says version >= 2)."""
+    fields (the server reads them only if the client says version >= 2).
+    A compressed request is always sent as version 2."""
+    if compression != COMPRESS_NONE:
+        version = max(version, 2)
     if version >= 2:
         req = struct.pack("!iiiiii", version, code, width, height,
                           compression, quality)
@@ -96,9 +108,14 @@ def get_config(server, timeout=None):
 def get_image(server, width, height, config=None, timeout=None, **req):
     """Request a width x height image. ``config`` (from get_config) fixes
     the channel count; without it the count is inferred from the reply
-    size. Extra keyword arguments go to pack_request."""
+    size. Extra keyword arguments go to pack_request; with
+    compression=COMPRESS_JPEG the reply is decoded with Pillow (imported
+    on demand) back to raw pixels, and ValueError means the server sent
+    no JPEG (no libjpeg in its Charm++) or one of the wrong size."""
     reply = server.request("lvImage", 0, pack_request(width, height, **req),
                            timeout=timeout)
+    if req.get("compression", COMPRESS_NONE) == COMPRESS_JPEG:
+        return _decode_jpeg(reply, width, height, config)
     n = width * height
     if config is not None:
         channels = config.bytes_per_pixel
@@ -110,4 +127,27 @@ def get_image(server, width, height, config=None, timeout=None, **req):
     if len(reply) != n * channels:
         raise ValueError("lvImage reply of %d bytes, expected %d"
                          % (len(reply), n * channels))
-    return Image(width, height, channels, reply)
+    return Image(width, height, channels, reply, len(reply))
+
+
+def _decode_jpeg(reply, width, height, config):
+    if not reply.startswith(b"\xff\xd8"):         # JPEG start-of-image marker
+        raise ValueError("lvImage JPEG request got %d bytes that are not a JPEG"
+                         % len(reply))
+    from PIL import Image as PILImage
+    try:
+        pil = PILImage.open(io.BytesIO(reply))
+        pil.load()
+    except Exception as e:                          # truncated or corrupt
+        raise ValueError("lvImage JPEG reply does not decode: %s" % e)
+    if pil.size != (width, height):
+        raise ValueError("lvImage JPEG reply is %dx%d, expected %dx%d"
+                         % (pil.size + (width, height)))
+    if config is not None:
+        mode = "RGB" if config.bytes_per_pixel == 3 else "L"
+    else:
+        mode = "L" if pil.mode == "L" else "RGB"
+    if pil.mode != mode:
+        pil = pil.convert(mode)
+    return Image(width, height, 3 if mode == "RGB" else 1, pil.tobytes(),
+                 len(reply))

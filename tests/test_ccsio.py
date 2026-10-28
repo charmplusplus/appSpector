@@ -10,7 +10,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import ccsio
 from ccsio import protocol as P, liveviz, objload, perf
-from fake_server import FakeCcsServer
+from fake_server import FakeCcsServer, lv_image_handler
+
+try:
+    import PIL.Image  # noqa: F401
+    HAVE_PIL = True
+except ImportError:
+    HAVE_PIL = False
 
 
 # A line-for-line port of SHA1_hash/SHA1_transform from ccs-auth.C, used
@@ -254,6 +260,54 @@ class LiveVizTests(unittest.TestCase):
         v = liveviz.View3d((1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, 0), -1.0, 1.0)
         req = liveviz.pack_request(8, 8, view3d=v)
         self.assertEqual(len(req), 16 + 14 * 8)
+
+
+class LiveVizJpegTests(unittest.TestCase):
+    def serve(self, jpeg, pixel=(200, 30, 30), color=True):
+        self.seen = []
+        srv = FakeCcsServer(node_sizes=(1,), close_on_unknown=(jpeg == "close"))
+        srv.register("lvConfig", lambda pe, d: struct.pack("!iiii", 1, int(color), 0, 0))
+        srv.register("lvImage", lv_image_handler(pixel, jpeg=jpeg, seen=self.seen))
+        self.addCleanup(srv.close)
+        s = ccsio.Server("127.0.0.1", srv.port, timeout=5)
+        return s, liveviz.get_config(s)
+
+    def test_v2_request(self):
+        # liveVizRequest::pupNetwork: version, code, wid, ht, then for
+        # version >= 2 compressionType and compressionQuality, all int32
+        self.assertEqual(liveviz.pack_request(640, 480, compression=liveviz.COMPRESS_JPEG, quality=80),
+                         struct.pack("!iiiiii", 2, 1, 640, 480, 1, 80))
+        self.assertEqual(liveviz.pack_request(640, 480), struct.pack("!iiii", 1, 1, 640, 480))
+
+    @unittest.skipUnless(HAVE_PIL, "no Pillow")
+    def test_jpeg_decode(self):
+        s, cfg = self.serve(True)
+        img = liveviz.get_image(s, 64, 48, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=90)
+        self.assertEqual(self.seen[-1], (2, 1, 90, 64, 48))
+        self.assertEqual((img.width, img.height, img.channels, len(img.pixels)), (64, 48, 3, 64 * 48 * 3))
+        self.assertLess(img.wire_bytes, 64 * 48 * 3 // 4)        # a flat image compresses well
+        for got, want in zip(img.pixels[:3], (200, 30, 30)):
+            self.assertLess(abs(got - want), 8)                    # JPEG is lossy
+
+    @unittest.skipUnless(HAVE_PIL, "no Pillow")
+    def test_jpeg_grey(self):
+        s, cfg = self.serve(True, pixel=128, color=False)
+        img = liveviz.get_image(s, 20, 10, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=75)
+        self.assertEqual((img.channels, len(img.pixels)), (1, 200))
+        self.assertLess(abs(img.pixels[0] - 128), 4)
+
+    def test_no_libjpeg(self):
+        # classic Charm++ without libjpeg: an empty reply
+        s, cfg = self.serve("empty")
+        with self.assertRaises(ValueError):
+            liveviz.get_image(s, 8, 8, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=75)
+        self.assertEqual(len(liveviz.get_image(s, 8, 8, config=cfg).pixels), 192)   # raw still works
+
+    def test_no_libjpeg_closes(self):
+        # reconverse without libjpeg: the connection closes with no reply
+        s, cfg = self.serve("close")
+        with self.assertRaises(ccsio.CcsNoReply):           # a CcsError, closed before any reply byte
+            liveviz.get_image(s, 8, 8, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=75)
 
 
 class PerfTests(unittest.TestCase):

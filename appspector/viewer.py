@@ -154,8 +154,14 @@ class Pacer:
     so for requests under max_wait it keeps a slow job or link busy at most
     half the time instead of back to back. Fast requests leave the plain
     fixed rate; when they speed up again the smoothed latency falls within
-    a few requests and the rate recovers. max_wait keeps a very slow pane refreshing. adaptive=False
-    (--fixed-rate) is the plain interval - latency."""
+    a few requests and the rate recovers. max_wait keeps a very slow pane
+    refreshing. adaptive=False (--fixed-rate) is the plain
+    interval - latency.
+
+    Only the image poller is paced. Each utilization request takes the
+    oldest one-second result from a queue in the runtime that grows by one
+    every second, so the perf poller must keep up with --perf-ms; its
+    replies are a few KB and were never the load problem."""
 
     def __init__(self, interval, adaptive=True, alpha=0.3, max_wait=5.0):
         self.interval, self.adaptive = interval, adaptive
@@ -277,7 +283,7 @@ class Viewer:
                 msg += "; liveViz %s%s" % ("color" if self.config.is_color else "grey",
                                            ", push" if self.config.is_push else "")
                 self.image_poller = Poller(self.fetch_image, self.args.image_ms / 1000.0, self.image_q,
-                                           adaptive=not getattr(self.args, "fixed_rate", False))
+                                           adaptive=not self.args.fixed_rate)
                 self.image_poller.start()
             if not self.args.no_perf:
                 if not self.names:
@@ -288,7 +294,7 @@ class Viewer:
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,
-                                          adaptive=not getattr(self.args, "fixed_rate", False))
+                                          adaptive=False)    # see Pacer: never paced
                 self.perf_poller.start()
             self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:
@@ -597,7 +603,7 @@ def main(argv=None):
     ap.add_argument("--image-ms", type=int, default=200, help="shortest image poll interval")
     ap.add_argument("--perf-ms", type=int, default=1000, help="shortest utilization poll interval")
     ap.add_argument("--fixed-rate", action="store_true",
-                    help="poll at --image-ms/--perf-ms even when requests are slow (no backoff)")
+                    help="poll images at --image-ms even when requests are slow (no backoff)")
     ap.add_argument("--pane", choices=["objects", "ep", "grid"], default="objects",
                     help="initial bottom view: per-PE bars stacked by chare (default) or utilization by entry "
                          "method over time; radio buttons in the window flip between them")

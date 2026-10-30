@@ -1,3 +1,4 @@
+import argparse
 import os
 import struct
 import sys
@@ -147,9 +148,9 @@ class ViewerSmokeTest(unittest.TestCase):
         srv.register(perf.HANDLER, lambda pe, d: perf_reply())
         srv.register("LBObjLoads", lambda pe, d: struct.pack("<i", 0))
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
-                perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="ep",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="ep",
                 inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
@@ -162,6 +163,9 @@ class ViewerSmokeTest(unittest.TestCase):
             self.assertGreaterEqual(len(v.columns), 2)
             self.assertEqual(v.columns[-1][0], {3: 60.0, 10000: 10.0})
             self.assertIn("frame", v.status.get())
+            # each utilization request drains one stored second; pacing would let them pile up
+            self.assertTrue(v.image_poller.pacer.adaptive)
+            self.assertFalse(v.perf_poller.pacer.adaptive)
             v.close()
         finally:
             srv.close()
@@ -190,9 +194,9 @@ class ObjectsPaneTest(unittest.TestCase):
             return out
         srv.register(objload.HANDLER, loads)
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
-                perf_ms=50, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="objects",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="objects",
                 inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
@@ -239,9 +243,9 @@ class InteractionTest(unittest.TestCase):
         srv.register("pfieldInject", lambda pe, d: (seen.append(("inject", struct.unpack("!dddi", d))), b"injected 7")[1])
         srv.register("pfieldBalance", lambda pe, d: (seen.append(("balance", d)), b"balancing")[1])
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(200, 100), image_ms=50,
-                perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="objects",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="objects",
                 inject="pfieldInject", inject_count=7, inject_sigma=0.05, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()

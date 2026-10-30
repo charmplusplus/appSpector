@@ -376,8 +376,10 @@ lately (a running average), but never more than 5 s. A request that
 takes 2 s is followed by about 2 s of quiet, so for requests under 5 s
 the job and the link are kept busy at most half the time; when requests
 get fast again the viewer is back at the full rate after a few of them.
-The load and utilization requests follow the same rule with their own
-interval. `--fixed-rate` turns the backoff off. Clicks and the Balance
+The load and utilization requests are not slowed down this way: they
+stay at `--perf-ms`, because each one collects the next second of
+utilization the job has stored, and their replies are small.
+`--fixed-rate` turns the image backoff off. Clicks and the Balance
 button go out on their own connection at once; they never wait for an
 image.
 
@@ -467,8 +469,8 @@ interval and the busiest PE.
 | `-k`, `--key KEY` | none | the `++server-auth` key |
 | `--size WxH` | 600x400 | initial image pane size |
 | `--image-ms N` | 200 | shortest image request interval; longer while requests are slow |
-| `--perf-ms N` | 1000 | shortest load and utilization request interval; longer while requests are slow |
-| `--fixed-rate` | | keep to `--image-ms` and `--perf-ms` even when requests are slow |
+| `--perf-ms N` | 1000 | load and utilization request interval |
+| `--fixed-rate` | | keep to `--image-ms` even when image requests are slow |
 | `--pane objects\|ep\|grid` | objects | initial bottom view |
 | `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS |
 | `--no-image` | | do not request images (a program without liveViz) |

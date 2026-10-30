@@ -341,7 +341,7 @@ class JpegImageTest(unittest.TestCase):
         self.assertIn("JPEG q60", status)
 
     def test_fallback_when_job_hangs(self):
-        # what liveViz without libjpeg does: holds the request, never replies
+        # a job that holds JPEG requests with no reply
         from appspector.viewer import JPEG_TRIES
         t0 = time.time()
         seen, status, note = self.run_viewer("hang")

@@ -297,8 +297,8 @@ class LiveVizJpegTests(unittest.TestCase):
         self.assertEqual((img.channels, len(img.pixels)), (1, 200))
         self.assertLess(abs(img.pixels[0] - 128), 4)
 
-    def test_no_libjpeg(self):
-        # liveViz without libjpeg holds the request and never replies
+    def test_jpeg_hang(self):
+        # a job that holds the request with no reply: a timeout, not a stall
         s, cfg = self.serve("hang")
         t0 = time.time()
         with self.assertRaises(ccsio.CcsTimeout):
@@ -307,15 +307,15 @@ class LiveVizJpegTests(unittest.TestCase):
         self.assertLess(time.time() - t0, 3)
         self.assertEqual(len(liveviz.get_image(s, 8, 8, config=cfg).pixels), 192)   # raw still works
 
-    def test_jpeg_empty_reply(self):
-        # a server that answers a JPEG request with 0 bytes
+    def test_no_libjpeg(self):
+        # classic Charm++ without libjpeg: an empty reply
         s, cfg = self.serve("empty")
         with self.assertRaises(ValueError):
             liveviz.get_image(s, 8, 8, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=75)
         self.assertEqual(len(liveviz.get_image(s, 8, 8, config=cfg).pixels), 192)   # raw still works
 
-    def test_jpeg_close(self):
-        # a server that closes the connection with no reply
+    def test_no_libjpeg_closes(self):
+        # reconverse without libjpeg: a 0-byte reply closes the socket
         s, cfg = self.serve("close")
         with self.assertRaises(ccsio.CcsNoReply):           # a CcsError, closed before any reply byte
             liveviz.get_image(s, 8, 8, config=cfg, compression=liveviz.COMPRESS_JPEG, quality=75)

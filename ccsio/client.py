@@ -19,9 +19,9 @@ class CcsNoReply(CcsError):
 
 
 class CcsTimeout(CcsError):
-    """No reply within the timeout, the connection still open: what a
-    handler that holds a delayed-reply token and never answers looks like
-    (liveViz asked for JPEG by a Charm++ built without libjpeg)."""
+    """No reply within the timeout, the connection still open: a slow
+    job or forward, or a handler that holds a delayed-reply token and
+    never answers it."""
 
 
 def _recv_exactly(sock, n, first=False):

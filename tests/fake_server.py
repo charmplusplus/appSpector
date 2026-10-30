@@ -155,13 +155,13 @@ def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0):
     """An lvImage handler like liveViz0.C: reads the version 1 or 2
     request and replies with a flat image of one pixel value (an RGB
     triple, or one int for greyscale). Compression 1 gets a Pillow JPEG at
-    the requested quality when jpeg is True. jpeg="hang" is what liveViz
-    in a Charm++ without libjpeg does: getImageHandler holds a delayed
-    reply and liveViz0Deposit never answers it, so the connection stays
-    open with no reply. jpeg="empty" (a 0-byte reply) and jpeg="close"
-    (closed with none) are other ways a server can fail to send JPEG.
-    flaky closes the first that many JPEG requests, like a hiccup of the
-    forward, before answering. seen collects the requests."""
+    the requested quality when jpeg is True; otherwise what a Charm++
+    without libjpeg sends, a 0-byte reply: jpeg="empty" as classic sends
+    it, jpeg="close" as reconverse does (it closes the socket with no
+    reply). jpeg="hang" holds the request with no reply at all (a stuck
+    job or forward). flaky closes the first that many JPEG requests, like
+    a hiccup of the forward, before answering. seen collects the
+    requests."""
     px = bytes(pixel) if isinstance(pixel, (tuple, list)) else bytes([pixel])
     misses = [flaky]
 

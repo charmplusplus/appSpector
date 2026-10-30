@@ -389,10 +389,10 @@ cluster. `--jpeg` (quality 75, or `--jpeg 50` for another,
 1 to 100) asks the program for JPEG images instead, a small fraction of
 that size; the viewer decodes them with Pillow. This needs the program's
 Charm++ built with libjpeg (see the table below). A JPEG request that
-gets no JPEG back is followed by a raw one for that frame. A program
-without libjpeg never answers a JPEG request, so until the first JPEG
-image arrives the viewer waits only 2 s for one (not `--timeout`).
-After three misses in a row (or at once if Pillow is missing) the viewer
+gets no JPEG back is followed by a raw one for that frame. Until the first
+JPEG image arrives the viewer waits only 2 s for one (not `--timeout`),
+so a job that holds JPEG requests cannot stall every frame. After three
+misses in a row (or at once if Pillow is missing) the viewer
 says so on the status line and requests raw images from then on. Once a JPEG image has
 arrived, a failed request is reported like any other.
 
@@ -436,7 +436,7 @@ in the shell shows the job output alongside.
 | Feature | What the program needs |
 |---|---|
 | Image pane | linked `-module liveViz` with a liveViz callback |
-| JPEG images (`--jpeg`) | a Charm++ whose configure found libjpeg's headers and library (`CMK_USE_LIBJPEG 1` in `<build>/include/conv-autoconfig.h`, `-ljpeg` in `<build>/lib/libmoduleliveViz.dep`); without it the program never answers a JPEG request (the connection stays open) and prints `Ignoring liveViz client's unrecognized compressionType 1` in its output. The Delta build from `cluster/setup.sh` has it (`cluster/delta.env` points the build at Spack's libjpeg-turbo; a Delta build made before that does not, rebuild it); laptop builds made after `port install jpeg` do |
+| JPEG images (`--jpeg`) | a Charm++ whose configure found libjpeg's headers and library (`CMK_USE_LIBJPEG 1` in `<build>/include/conv-autoconfig.h`, `-ljpeg` in `<build>/lib/libmoduleliveViz.dep`); without it the program answers a JPEG request with nothing and prints `Ignoring liveViz client's unrecognized compressionType 1` in its output. The Delta build from `cluster/setup.sh` has it (`cluster/delta.env` points the build at Spack's libjpeg-turbo; a Delta build made before that does not, rebuild it); laptop builds made after `port install jpeg` do |
 | By-PE and PE-grid panes | linked `-tracemode utilization` (handler `CkPerfObjLoads`, from the trace events, unaffected by `+LBOff` or `LBTurnInstrumentOff`); without it, any Charm++ built from branch `recharm` after 2026-10-23 (handler `LBObjLoads`, which reports the load-balancing database and is empty while that instrumentation is off) |
 | Over-time pane | linked `-tracemode utilization` (Charm++ built `--enable-tracing`); a greyed-out button means the handler is missing and the status line says so |
 | Inject click | a CCS handler like pfield's `pfieldInject`; other programs need their own, named with `--inject` |

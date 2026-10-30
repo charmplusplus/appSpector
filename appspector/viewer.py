@@ -377,15 +377,16 @@ class Viewer:
                 self.image_note = "  JPEG q%d %.0f KB" % (self.jpeg, img.wire_bytes / 1024.0)
                 return img
             except (ValueError, ccsio.CcsNoReply, ccsio.CcsTimeout) as e:
-                # A liveViz without libjpeg never answers a JPEG request: it
-                # holds the reply and the connection stays open, so until the
-                # first JPEG frame these requests get the short
-                # JPEG_PROBE_SECONDS and a timeout counts as a miss, like an
-                # empty reply or a close. One miss may be a hiccup of the
-                # forward, so this frame comes raw and JPEG is given up for
-                # good only after JPEG_TRIES in a row. Once JPEG has worked
-                # the job has it: misses are reported as usual, as are
-                # refused connections.
+                # A liveViz without libjpeg answers a JPEG request with 0
+                # bytes (liveViz0Deposit's default case), which classic
+                # Charm++ sends as an empty reply and reconverse as a close
+                # before any reply byte. Until the first JPEG frame a timeout
+                # (JPEG_PROBE_SECONDS, short) counts as a miss too, so a job
+                # that holds JPEG requests cannot stall every frame for
+                # --timeout. One miss may be a hiccup of the forward, so this
+                # frame comes raw and JPEG is given up for good only after
+                # JPEG_TRIES in a row. Once JPEG has worked the job has it:
+                # misses are reported as usual, as are refused connections.
                 if self.jpeg_ok:
                     raise
                 self.jpeg_misses += 1

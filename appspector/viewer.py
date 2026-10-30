@@ -52,6 +52,7 @@ PANE_MISSING = {        # why a bottom-pane button is greyed out
 
 NOTICE_SECONDS = 4.5   # how long a notice holds the status line against routine updates
 JPEG_TRIES = 3          # JPEG requests in a row with no JPEG back before raw for good
+JPEG_PROBE_SECONDS = 2.0  # timeout for JPEG requests until the first JPEG frame
 OTHER_COLOR = "#999999"
 IDLE_COLOR = "#f0f0f0"
 
@@ -368,19 +369,23 @@ class Viewer:
     def fetch_image(self):
         w, h = (max(1, v) for v in self.image_size)   # no Tk calls off the UI thread
         if self.jpeg is not None:
+            timeout = self.args.timeout if self.jpeg_ok else min(self.args.timeout, JPEG_PROBE_SECONDS)
             try:
-                img = liveviz.get_image(self.server, w, h, config=self.config, timeout=self.args.timeout,
+                img = liveviz.get_image(self.server, w, h, config=self.config, timeout=timeout,
                                         compression=liveviz.COMPRESS_JPEG, quality=self.jpeg)
                 self.jpeg_ok, self.jpeg_misses = True, 0
                 self.image_note = "  JPEG q%d %.0f KB" % (self.jpeg, img.wire_bytes / 1024.0)
                 return img
-            except (ValueError, ccsio.CcsNoReply) as e:
-                # A liveViz without libjpeg answers 0 bytes (classic) or closes
-                # the connection before any reply byte (reconverse). One such
-                # miss may be a hiccup of the forward, so this frame comes raw
-                # and JPEG is given up for good only after JPEG_TRIES in a row.
-                # Once JPEG has worked the job has it: misses are reported as
-                # usual, as are timeouts and refused connections.
+            except (ValueError, ccsio.CcsNoReply, ccsio.CcsTimeout) as e:
+                # A liveViz without libjpeg never answers a JPEG request: it
+                # holds the reply and the connection stays open, so until the
+                # first JPEG frame these requests get the short
+                # JPEG_PROBE_SECONDS and a timeout counts as a miss, like an
+                # empty reply or a close. One miss may be a hiccup of the
+                # forward, so this frame comes raw and JPEG is given up for
+                # good only after JPEG_TRIES in a row. Once JPEG has worked
+                # the job has it: misses are reported as usual, as are
+                # refused connections.
                 if self.jpeg_ok:
                     raise
                 self.jpeg_misses += 1

@@ -18,6 +18,12 @@ class CcsNoReply(CcsError):
     a reconverse job without the handler looks like."""
 
 
+class CcsTimeout(CcsError):
+    """No reply within the timeout, the connection still open: what a
+    handler that holds a delayed-reply token and never answers looks like
+    (liveViz asked for JPEG by a Charm++ built without libjpeg)."""
+
+
 def _recv_exactly(sock, n, first=False):
     """n bytes from sock; first marks the read that starts a reply, so a
     close before any byte of it raises CcsNoReply."""
@@ -67,7 +73,7 @@ class Pending:
                 raise CcsError("negative reply length %d" % n)
             return _recv_exactly(self._sock, n)
         except socket.timeout:
-            raise CcsError("timed out waiting for reply")
+            raise CcsTimeout("timed out waiting for reply")
         finally:
             self.close()
 

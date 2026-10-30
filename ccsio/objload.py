@@ -8,7 +8,9 @@ the first one the job has:
                       element from the trace events, independent of the
                       load-balancing instrumentation, so a program that
                       switches that instrumentation off (LBTurnInstrumentOff,
-                      +LBOff) is still seen in full.
+                      +LBOff) is still seen in full. Time spent in a
+                      [threaded] entry after it first suspends, and in
+                      TCharm/AMPI threads, is charged to the owning element.
     "LBObjLoads"      from the LBManager (any Charm++ built from recharm
                       after 2026-10-23): whatever the load-balancing
                       database holds; empty while its instrumentation is off.
@@ -17,14 +19,18 @@ Reply, in the job's native byte order:
 
     int32 numPes
     per PE (reduction order; the pe field says which):
-        int32 pe, double wallNow, double totalWall, double idleWall, int32 n
+        int32 pe, double wallNow, double elapsed, double idleWall, int32 n
         n x { uint64 objId, int32 om, double objWall, uint8 migratable }
 
-The times are cumulative (the trace: since the object was first seen, or
-again since it reappeared after a minute of inactivity; the database:
-since the last load-balancing step), so the useful quantity is the
-difference between two snapshots: see diff(). Objects are keyed by
-(om, objId); the key follows a migrating object.
+elapsed is the time since the trace or the database started measuring, so
+busy = elapsed - idleWall. The object times are cumulative (the trace:
+since the object was first seen, or again since it reappeared after a
+minute of inactivity; the database: since the last load-balancing step),
+so the useful quantity is the difference between two snapshots: see
+diff(). Both handlers key an object the same way, (om, objId): om is the
+array's location-manager group index and objId the element's id within
+it, so a client can match the two replies element by element; the key
+follows a migrating object.
 """
 
 import struct
@@ -44,7 +50,7 @@ ObjKey = Tuple[int, int]      # (om group index, object id)
 class PeLoad:
     pe: int
     now: float
-    total: float
+    total: float      # seconds measured so far (elapsed); busy = total - idle
     idle: float
     objs: Dict[ObjKey, float] = field(default_factory=dict)   # cumulative seconds
     migratable: Dict[ObjKey, bool] = field(default_factory=dict)

@@ -10,6 +10,8 @@ import time
 
 from ccsio import protocol as P
 
+HANG = object()     # a handler result: no reply, connection left open until close()
+
 
 def _recv_exactly(sock, n):
     buf = b""
@@ -37,6 +39,7 @@ class FakeCcsServer:
         self.port = self._sock.getsockname()[1]
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._stop = False
+        self._closed = threading.Event()
         self._thread.start()
 
     @property
@@ -48,6 +51,7 @@ class FakeCcsServer:
 
     def close(self):
         self._stop = True
+        self._closed.set()
         try:
             socket.create_connection(("127.0.0.1", self.port)).close()
         except OSError:
@@ -102,7 +106,9 @@ class FakeCcsServer:
             data = _recv_exactly(conn, data_len) if data_len else b""
             self.requests.append((name, pe if pes is None else pes, data))
             reply = self._dispatch(name, pe, pes, data)
-            if reply is not None:
+            if reply is HANG:
+                self._closed.wait()
+            elif reply is not None:
                 conn.sendall(reply_prefix + struct.pack("!i", len(reply)) + reply)
         except (EOFError, OSError):
             pass
@@ -139,8 +145,8 @@ class FakeCcsServer:
         out = []
         for p in targets:
             r = fn(p, data)
-            if r is None:
-                return None
+            if r is None or r is HANG:
+                return r
             out.append(r)
         return b"".join(out)
 
@@ -149,11 +155,13 @@ def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0):
     """An lvImage handler like liveViz0.C: reads the version 1 or 2
     request and replies with a flat image of one pixel value (an RGB
     triple, or one int for greyscale). Compression 1 gets a Pillow JPEG at
-    the requested quality when jpeg is True; otherwise what a Charm++
-    without libjpeg sends: jpeg="empty" a 0-byte reply (classic), jpeg=
-    "close" none at all (reconverse closes). flaky closes the first that
-    many JPEG requests, like a hiccup of the forward, before answering.
-    seen collects the requests."""
+    the requested quality when jpeg is True. jpeg="hang" is what liveViz
+    in a Charm++ without libjpeg does: getImageHandler holds a delayed
+    reply and liveViz0Deposit never answers it, so the connection stays
+    open with no reply. jpeg="empty" (a 0-byte reply) and jpeg="close"
+    (closed with none) are other ways a server can fail to send JPEG.
+    flaky closes the first that many JPEG requests, like a hiccup of the
+    forward, before answering. seen collects the requests."""
     px = bytes(pixel) if isinstance(pixel, (tuple, list)) else bytes([pixel])
     misses = [flaky]
 
@@ -175,5 +183,5 @@ def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0):
             Image.frombytes("RGB" if len(px) == 3 else "L", (w, h), raw).save(
                 out, "JPEG", quality=quality)
             return out.getvalue()
-        return None if jpeg == "close" else b""
+        return {"hang": HANG, "close": None}.get(jpeg, b"")
     return handler

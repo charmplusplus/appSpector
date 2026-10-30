@@ -304,7 +304,7 @@ class JpegImageTest(unittest.TestCase):
     JPEG_TRIES JPEG attempts in a row came back empty, with the reason on
     the status line."""
 
-    def run_viewer(self, jpeg, quality=60, pillow=True, flaky=0, frames=6):
+    def run_viewer(self, jpeg, quality=60, pillow=True, flaky=0, frames=6, probe=0.3):
         from unittest import mock
         from fake_server import lv_image_handler
         from appspector import viewer as V
@@ -313,14 +313,15 @@ class JpegImageTest(unittest.TestCase):
         srv.register("lvConfig", lambda pe, d: struct.pack("!iiii", 1, 1, 0, 0))
         srv.register("lvImage", lv_image_handler(jpeg=jpeg, seen=seen, flaky=flaky))
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=30,
                 perf_ms=50, sts=None, no_image=False, no_perf=True, timeout=5.0, pane="objects",
                 inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance",
                 jpeg=quality, fixed_rate=True)
             root = tk.Tk()
             root.withdraw()
-            with mock.patch.object(V, "pillow_available", return_value=pillow):
+            with mock.patch.object(V, "pillow_available", return_value=pillow), \
+                    mock.patch.object(V, "JPEG_PROBE_SECONDS", probe):
                 v = V.Viewer(root, args)
                 deadline = time.time() + 5
                 while time.time() < deadline and v.frames < frames:
@@ -338,6 +339,17 @@ class JpegImageTest(unittest.TestCase):
         seen, status, note = self.run_viewer(True, frames=3)
         self.assertTrue(all(r[:3] == (2, 1, 60) for r in seen), seen)
         self.assertIn("JPEG q60", status)
+
+    def test_fallback_when_job_hangs(self):
+        # what liveViz without libjpeg does: holds the request, never replies
+        from appspector.viewer import JPEG_TRIES
+        t0 = time.time()
+        seen, status, note = self.run_viewer("hang")
+        self.assertEqual([r[1] for r in seen[:2 * JPEG_TRIES]], [1, 0] * JPEG_TRIES)
+        self.assertTrue(all(r[:2] == (1, 0) for r in seen[2 * JPEG_TRIES:]), seen)
+        self.assertEqual(note, "  raw (job has no JPEG)")
+        self.assertIn("JPEG off", status)
+        self.assertLess(time.time() - t0, 4.5)     # the short probe timeout, not --timeout (5 s)
 
     def test_fallback_when_job_closes(self):
         from appspector.viewer import JPEG_TRIES

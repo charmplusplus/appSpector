@@ -365,9 +365,23 @@ row of controls between them, and a status line at the bottom.
 
 ### The image pane
 
-The program's own liveViz image, requested every 200 ms (`--image-ms`)
-at the size of the pane. Pillow is not needed; Tk reads the raw image
-bytes directly.
+The program's own liveViz image, requested at most every 200 ms
+(`--image-ms`) at the size of the pane. Pillow is not needed; Tk reads
+the raw image bytes directly.
+
+The viewer never has more than one image request out, and it does not
+flood a slow job or link: after each request it waits until the
+interval is up, and at least as long as requests have been taking
+lately (a running average), but never more than 5 s. A request that
+takes 2 s is followed by about 2 s of quiet, so for requests under 5 s
+the job and the link are kept busy at most half the time; when requests
+get fast again the viewer is back at the full rate after a few of them.
+The load and utilization requests are not slowed down this way: they
+stay at `--perf-ms`, because each one collects the next second of
+utilization the job has stored, and their replies are small.
+`--fixed-rate` turns the image backoff off. Clicks and the Balance
+button go out on their own connection at once; they never wait for an
+image.
 
 A click in the image sends an inject request to the program: the click's
 x and y as fractions of the image, a blob width (`--inject-sigma`, 0.03
@@ -378,8 +392,8 @@ in the image adds 2000 particles" beside the controls shows the count.
 ### The bottom panes
 
 Radio buttons after "Load view:" choose one of three views. Both data
-sources are requested every second (`--perf-ms`), so flipping between
-views is immediate.
+sources are requested every second (`--perf-ms`, slower while requests
+are slow, as for the image), so flipping between views is immediate.
 
 - **by PE, last second, stacked by chare** (the default, `--pane objects`):
   one bar per PE whose height is that PE's utilization over the last
@@ -425,7 +439,7 @@ returns the entry-method names).
 |---|---|
 | `connected: N PE(s) on M node(s); liveViz color, push; K entry names` | the viewer reached the job; it lists what it found |
 | `error: ...` | the first connection failed: wrong host or port, the forward is not up, or a wrong or missing key |
-| `frame N  WxH  T ms/request` | images are arriving; T is the time per image request |
+| `frame N  WxH  T ms/request, every P ms` | images are arriving; T is the time the last image request took, P the time from one request to the next (`--image-ms`, or more while requests are slow) |
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
 | `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
@@ -454,8 +468,9 @@ interval and the busiest PE.
 | `HOST PORT` | | where the job's CCS port is reachable |
 | `-k`, `--key KEY` | none | the `++server-auth` key |
 | `--size WxH` | 600x400 | initial image pane size |
-| `--image-ms N` | 200 | image request interval |
+| `--image-ms N` | 200 | shortest image request interval; longer while requests are slow |
 | `--perf-ms N` | 1000 | load and utilization request interval |
+| `--fixed-rate` | | keep to `--image-ms` even when image requests are slow |
 | `--pane objects\|ep\|grid` | objects | initial bottom view |
 | `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS |
 | `--no-image` | | do not request images (a program without liveViz) |
@@ -571,8 +586,10 @@ Give the viewer your handler names in the program entry's third field
 - **Clicks do nothing.** The program has no inject handler; the status
   line says "no reply (job has no pfieldInject handler)". Add one, or name
   yours with `--inject`.
-- **"frame … ms/request" keeps climbing.** The forward or the network is
-  slow. Raise `--image-ms` to request images less often.
+- **"frame … ms/request" keeps climbing.** The forward, the network or
+  the job is slow; "every P ms" shows the viewer already asking less
+  often. Make the image pane smaller (fewer bytes per frame), or raise
+  `--image-ms` to ask less often still.
 - **`run` says "cannot ssh to ... non-interactively".** Open the control
   master (`ssh delta`) or set up key authentication, then retry.
 - **"spec incomplete" or a complaint about PEs and processes.** `pes` is

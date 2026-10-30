@@ -30,7 +30,7 @@ written in plain Python.
 You need Python 3.9 or newer with tkinter. The python.org installer on
 macOS includes tkinter; on Linux install the `python3-tk` package. No
 other packages are needed. Pillow is optional and is used only to save
-images.
+images and to decode JPEG images in the viewer (`--jpeg`).
 
 ```
 git clone https://github.com/charmplusplus/appSpector.git
@@ -383,6 +383,19 @@ utilization the job has stored, and their replies are small.
 button go out on their own connection at once; they never wait for an
 image.
 
+A raw image is 3 bytes per pixel, about 1.3 MB for an 1100x400 pane:
+several MB/s at 200 ms, and seconds per request over an ssh forward to a
+cluster. `--jpeg` (quality 75, or `--jpeg 50` for another,
+1 to 100) asks the program for JPEG images instead, a small fraction of
+that size; the viewer decodes them with Pillow. This needs the program's
+Charm++ built with libjpeg (see the table below). A JPEG request that
+gets no JPEG back is followed by a raw one for that frame. Until the first
+JPEG image arrives the viewer waits only 2 s for one (not `--timeout`),
+so a job that holds JPEG requests cannot stall every frame. After three
+misses in a row (or at once if Pillow is missing) the viewer
+says so on the status line and requests raw images from then on. Once a JPEG image has
+arrived, a failed request is reported like any other.
+
 A click in the image sends an inject request to the program: the click's
 x and y as fractions of the image, a blob width (`--inject-sigma`, 0.03
 of the image) and a count (`--inject-count`, 2000 particles), to the
@@ -423,6 +436,7 @@ in the shell shows the job output alongside.
 | Feature | What the program needs |
 |---|---|
 | Image pane | linked `-module liveViz` with a liveViz callback |
+| JPEG images (`--jpeg`) | a Charm++ whose configure found libjpeg's headers and library (`CMK_USE_LIBJPEG 1` in `<build>/include/conv-autoconfig.h`, `-ljpeg` in `<build>/lib/libmoduleliveViz.dep`); without it the program answers a JPEG request with nothing and prints `Ignoring liveViz client's unrecognized compressionType 1` in its output. The Delta build from `cluster/setup.sh` has it (`cluster/delta.env` points the build at Spack's libjpeg-turbo; a Delta build made before that does not, rebuild it); laptop builds made after `port install jpeg` do |
 | By-PE and PE-grid panes | linked `-tracemode utilization` (handler `CkPerfObjLoads`, from the trace events, unaffected by `+LBOff` or `LBTurnInstrumentOff`); without it, any Charm++ built from branch `recharm` after 2026-10-23 (handler `LBObjLoads`, which reports the load-balancing database and is empty while that instrumentation is off) |
 | Over-time pane | linked `-tracemode utilization` (Charm++ built `--enable-tracing`); a greyed-out button means the handler is missing and the status line says so |
 | Inject click | a CCS handler like pfield's `pfieldInject`; other programs need their own, named with `--inject` |
@@ -440,6 +454,10 @@ returns the entry-method names).
 | `connected: N PE(s) on M node(s); liveViz color, push; K entry names` | the viewer reached the job; it lists what it found |
 | `error: ...` | the first connection failed: wrong host or port, the forward is not up, or a wrong or missing key |
 | `frame N  WxH  T ms/request, every P ms` | images are arriving; T is the time the last image request took, P the time from one request to the next (`--image-ms`, or more while requests are slow) |
+| `frame ...  JPEG qQ S KB` | the same with `--jpeg`: quality Q, S KB for the last image |
+| `frame ...  raw (JPEG try K of 3 failed)` | with `--jpeg`, the last JPEG request got no JPEG back, so this frame is raw; a hiccup of the forward, or the start of the case below |
+| `JPEG off: the job's liveViz cannot send JPEG ...` (held a few seconds), then `frame ...  raw (job has no JPEG)` | `--jpeg` was given but three JPEG requests in a row got none: the program's Charm++ has no libjpeg; images are raw |
+| `frame ...  raw (no Pillow for JPEG)`, after `...; JPEG off: Pillow is not installed, raw images` | `--jpeg` was given but Pillow is not installed on the laptop (`pip install Pillow`) |
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
 | `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
@@ -469,6 +487,7 @@ interval and the busiest PE.
 | `-k`, `--key KEY` | none | the `++server-auth` key |
 | `--size WxH` | 600x400 | initial image pane size |
 | `--image-ms N` | 200 | shortest image request interval; longer while requests are slow |
+| `--jpeg [Q]` | off (raw) | request JPEG images at quality Q, 1 to 100 (75 if Q is left out); needs Pillow and a Charm++ with libjpeg, else raw images. Put it after `HOST PORT` |
 | `--perf-ms N` | 1000 | load and utilization request interval |
 | `--fixed-rate` | | keep to `--image-ms` even when image requests are slow |
 | `--pane objects\|ep\|grid` | objects | initial bottom view |
@@ -588,8 +607,9 @@ Give the viewer your handler names in the program entry's third field
   yours with `--inject`.
 - **"frame … ms/request" keeps climbing.** The forward, the network or
   the job is slow; "every P ms" shows the viewer already asking less
-  often. Make the image pane smaller (fewer bytes per frame), or raise
-  `--image-ms` to ask less often still.
+  often. Try `--jpeg` if the program's Charm++ has libjpeg (far fewer
+  bytes per frame), make the image pane smaller, or raise `--image-ms`
+  to ask less often still.
 - **`run` says "cannot ssh to ... non-interactively".** Open the control
   master (`ssh delta`) or set up key authentication, then retry.
 - **"spec incomplete" or a complaint about PEs and processes.** `pes` is

@@ -19,6 +19,12 @@ try:
 except Exception:
     HAVE_TK = False
 
+try:
+    import PIL.Image  # noqa: F401
+    V_HAVE_PIL = True
+except ImportError:
+    V_HAVE_PIL = False
+
 
 def perf_reply(n_bins=1000):
     buf = struct.pack("<ii", n_bins, 2)
@@ -290,3 +296,94 @@ class InteractionTest(unittest.TestCase):
             v.close()
         finally:
             srv.close()
+
+
+@unittest.skipUnless(HAVE_TK, "no Tk display")
+class JpegImageTest(unittest.TestCase):
+    """--jpeg: JPEG frames when the job can send them, else raw ones after
+    JPEG_TRIES JPEG attempts in a row came back empty, with the reason on
+    the status line."""
+
+    def run_viewer(self, jpeg, quality=60, pillow=True, flaky=0, frames=6, probe=0.3):
+        from unittest import mock
+        from fake_server import lv_image_handler
+        from appspector import viewer as V
+        seen = []
+        srv = FakeCcsServer(node_sizes=(1,), close_on_unknown=(jpeg == "close"))
+        srv.register("lvConfig", lambda pe, d: struct.pack("!iiii", 1, 1, 0, 0))
+        srv.register("lvImage", lv_image_handler(jpeg=jpeg, seen=seen, flaky=flaky))
+        try:
+            args = argparse.Namespace(
+                host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=30,
+                perf_ms=50, sts=None, no_image=False, no_perf=True, timeout=5.0, pane="objects",
+                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance",
+                jpeg=quality, fixed_rate=True)
+            root = tk.Tk()
+            root.withdraw()
+            with mock.patch.object(V, "pillow_available", return_value=pillow), \
+                    mock.patch.object(V, "JPEG_PROBE_SECONDS", probe):
+                v = V.Viewer(root, args)
+                deadline = time.time() + 5
+                while time.time() < deadline and v.frames < frames:
+                    root.update()
+                    time.sleep(0.02)
+            self.assertGreaterEqual(v.frames, frames, v.status.get())
+            result = seen, v.status.get(), v.image_note
+            v.close()
+            return result
+        finally:
+            srv.close()
+
+    @unittest.skipUnless(V_HAVE_PIL, "no Pillow")
+    def test_jpeg_frames(self):
+        seen, status, note = self.run_viewer(True, frames=3)
+        self.assertTrue(all(r[:3] == (2, 1, 60) for r in seen), seen)
+        self.assertIn("JPEG q60", status)
+
+    def test_fallback_when_job_hangs(self):
+        # a job that holds JPEG requests with no reply
+        from appspector.viewer import JPEG_TRIES
+        t0 = time.time()
+        seen, status, note = self.run_viewer("hang")
+        self.assertEqual([r[1] for r in seen[:2 * JPEG_TRIES]], [1, 0] * JPEG_TRIES)
+        self.assertTrue(all(r[:2] == (1, 0) for r in seen[2 * JPEG_TRIES:]), seen)
+        self.assertEqual(note, "  raw (job has no JPEG)")
+        self.assertIn("JPEG off", status)
+        self.assertLess(time.time() - t0, 4.5)     # the short probe timeout, not --timeout (5 s)
+
+    def test_fallback_when_job_closes(self):
+        from appspector.viewer import JPEG_TRIES
+        seen, status, note = self.run_viewer("close")
+        # each JPEG try that gets nothing is followed by a raw request for that frame
+        self.assertEqual([r[1] for r in seen[:2 * JPEG_TRIES]], [1, 0] * JPEG_TRIES)
+        self.assertTrue(all(r[:2] == (1, 0) for r in seen[2 * JPEG_TRIES:]), seen)
+        self.assertEqual(note, "  raw (job has no JPEG)")
+        self.assertIn("JPEG off", status)          # a notice: held over the frame lines
+
+    def test_fallback_on_empty_reply(self):
+        from appspector.viewer import JPEG_TRIES
+        seen, status, note = self.run_viewer("empty")
+        self.assertEqual(sum(1 for r in seen if r[1] == 1), JPEG_TRIES)
+        self.assertEqual(note, "  raw (job has no JPEG)")
+
+    @unittest.skipUnless(V_HAVE_PIL, "no Pillow")
+    def test_transient_miss_keeps_jpeg(self):
+        # one closed connection before the first JPEG frame is a hiccup, not
+        # a job without libjpeg: that frame comes raw, JPEG carries on
+        seen, status, note = self.run_viewer(True, flaky=1)
+        self.assertEqual([r[1] for r in seen[:3]], [1, 0, 1])
+        self.assertTrue(all(r[1] == 1 for r in seen[2:]), seen)
+        self.assertIn("JPEG q60", note)
+        self.assertNotIn("JPEG off", status)
+
+    def test_no_pillow(self):
+        seen, status, note = self.run_viewer(True, pillow=False, frames=3)
+        self.assertTrue(all(r[:2] == (1, 0) for r in seen), seen)  # never asks for JPEG
+        self.assertIn("raw (no Pillow for JPEG)", status)
+
+    def test_quality_option(self):
+        from appspector import viewer as V
+        import argparse
+        self.assertEqual(V.jpeg_quality("40"), 40)
+        with self.assertRaises(argparse.ArgumentTypeError):
+            V.jpeg_quality("0")

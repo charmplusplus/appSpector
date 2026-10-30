@@ -34,6 +34,51 @@ class ColumnTests(unittest.TestCase):
         self.assertEqual(total, 70.0)
 
 
+class StatusLineTests(unittest.TestCase):
+    """Notices (replies to a click or to Balance) hold the line against the
+    frame counter for a while; alerts (polling errors) show at once."""
+
+    class Var:
+        def set(self, text):
+            self.text = text
+
+    def setUp(self):
+        from appspector.viewer import StatusLine
+        self.now = 100.0
+        self.var = self.Var()
+        self.line = StatusLine(self.var, hold=4.0, clock=lambda: self.now)
+
+    def test_routine_without_notice(self):
+        self.line.routine("frame 1")
+        self.line.routine("frame 2")
+        self.assertEqual(self.var.text, "frame 2")
+
+    def test_notice_holds_then_expires(self):
+        self.line.routine("frame 1")
+        self.line.notice("inject at (0.13, 0.25): injected 2000 into 15 cells")
+        self.now += 3.9
+        self.line.routine("frame 20")
+        self.assertEqual(self.var.text, "inject at (0.13, 0.25): injected 2000 into 15 cells")
+        self.now += 0.2
+        self.line.routine("frame 21")
+        self.assertEqual(self.var.text, "frame 21")
+
+    def test_new_notice_restarts_hold(self):
+        self.line.notice("inject at (0.50, 0.50): sent, waiting for the reply ...")
+        self.now += 3.0
+        self.line.notice("inject at (0.50, 0.50): no reply (job has no pfieldInject handler)")
+        self.now += 3.0
+        self.line.routine("frame 30")
+        self.assertIn("no reply", self.var.text)
+
+    def test_alert_shows_at_once_and_ends_notice(self):
+        self.line.notice("balance: done")
+        self.line.alert("image: the job is gone (connection refused)")
+        self.assertEqual(self.var.text, "image: the job is gone (connection refused)")
+        self.line.routine("frame 5")           # not held: the next frame replaces it
+        self.assertEqual(self.var.text, "frame 5")
+
+
 @unittest.skipUnless(HAVE_TK, "no Tk display")
 class ViewerSmokeTest(unittest.TestCase):
     def test_polls_both_panes(self):
@@ -147,12 +192,31 @@ class InteractionTest(unittest.TestCase):
             root = tk.Tk()
             root.withdraw()
             v = V.Viewer(root, args)
+            v.status_line.hold = 60.0      # longer than the test, however slow the box
             deadline = time.time() + 5
             while time.time() < deadline and v.server is None:
                 root.update()
                 time.sleep(0.02)
+            # let the missing ep stream switch its pane off first: that is a notice too
+            deadline = time.time() + 5
+            while time.time() < deadline and str(v.view_buttons["ep"].cget("state")) != "disabled":
+                root.update()
+                time.sleep(0.02)
             class Ev: x, y = 50, 25
             v.on_image_click(Ev())
+            self.assertEqual(v.status.get(), "inject at (0.25, 0.25): sent, waiting for the reply ...")
+            deadline = time.time() + 5
+            while time.time() < deadline and "injected" not in v.status.get():
+                root.update()
+                time.sleep(0.02)
+            # the reply stays on the status line while frames keep arriving
+            frames = v.frames
+            deadline = time.time() + 5
+            while time.time() < deadline and v.frames < frames + 3:
+                root.update()
+                time.sleep(0.02)
+            self.assertGreaterEqual(v.frames, frames + 3)
+            self.assertEqual(v.status.get(), "inject at (0.25, 0.25): injected 7")
             v.request_balance()
             deadline = time.time() + 5
             while time.time() < deadline and len(seen) < 2:

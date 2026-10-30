@@ -43,8 +43,10 @@ PANE_MISSING = {        # why a bottom-pane button is greyed out
     "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
     "objects": "'by PE' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "grid": "'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
+    "objects+grid": "'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
 }
 
+NOTICE_SECONDS = 4.5   # how long a notice holds the status line against routine updates
 OTHER_COLOR = "#999999"
 IDLE_COLOR = "#f0f0f0"
 
@@ -108,6 +110,38 @@ def tk_photo_from_image(img, master=None):
     return tk.PhotoImage(master=master, data=data, format="PPM")
 
 
+class StatusLine:
+    """The one status line, written three ways. routine() is the frame
+    counter, set on every image (5 times a second): it would wipe anything
+    else before anyone could read it, so it is dropped while a notice
+    holds the line. notice() is a message the user must get to read (the
+    reply to a click or to Balance, a pane switched off): it shows at once
+    and holds the line for hold seconds. alert() is a polling error (the
+    job is gone, a request failed) or the connect message: it shows at
+    once and ends any notice, since a dead job matters more than an older
+    reply and no frames will follow to replace it anyway; it is not held,
+    so a one-off timeout gives way to the next frame as before. var is
+    anything with set(text), a tk.StringVar in the viewer; clock is for
+    the tests."""
+
+    def __init__(self, var, hold=NOTICE_SECONDS, clock=time.monotonic):
+        self.var, self.hold, self.clock = var, hold, clock
+        self.until = None          # clock() time the current notice expires
+
+    def routine(self, text):
+        if self.until is None or self.clock() >= self.until:
+            self.until = None
+            self.var.set(text)
+
+    def notice(self, text):
+        self.until = self.clock() + self.hold
+        self.var.set(text)
+
+    def alert(self, text):
+        self.until = None
+        self.var.set(text)
+
+
 class Poller(threading.Thread):
     """Calls fn() every interval seconds and queues (result or exception)."""
 
@@ -136,6 +170,7 @@ class Viewer:
         self.args = args
         root.title("appSpector  %s:%s" % (args.host, args.port))
         self.status = tk.StringVar(value="connecting to %s:%s ..." % (args.host, args.port))
+        self.status_line = StatusLine(self.status)
         self.width, self.height = args.size
 
         pane = ttk.PanedWindow(root, orient=tk.VERTICAL)
@@ -184,13 +219,13 @@ class Viewer:
         self.ep_colors = {}
         self.names = perf.read_sts_entries(args.sts) if args.sts else {}
         self.image_q, self.perf_q = queue.Queue(), queue.Queue()
-        self.msg_q = queue.Queue()      # status lines from worker threads
+        self.msg_q = queue.Queue()      # (status_line method, text) from worker threads
         self.image_poller = self.perf_poller = None
         self.server = self.config = None
         self.frames = 0
         self.empty_perf = 0
         threading.Thread(target=self.connect, daemon=True).start()
-        root.after(50, self.drain)
+        self.drain_id = root.after(50, self.drain)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
     # -- connection and pollers (worker threads) ---------------------------
@@ -216,24 +251,27 @@ class Viewer:
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q)
                 self.perf_poller.start()
-            self.msg_q.put(msg)
+            self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:
-            self.msg_q.put("error: %s" % e)
+            self.msg_q.put((self.status_line.alert, "error: %s" % e))
 
     # -- interaction with the application ---------------------------------
 
     def _oneway(self, handler, data, what):
-        """A request on its own short thread; the reply goes to the status line."""
+        """A request on its own short thread; "sent" and then the reply go to
+        the status line as notices, so a click that gets no answer reads
+        differently from a click that never happened."""
         def run():
             try:
                 reply = self.server.request(handler, 0, data, timeout=self.args.timeout)
                 text = reply.decode("utf-8", "replace").rstrip("\0") or "no reply (job has no %s handler)" % handler
-                self.msg_q.put("%s: %s" % (what, text))
+                self.msg_q.put((self.status_line.notice, "%s: %s" % (what, text)))
             except Exception as e:
-                self.msg_q.put("%s failed: %s" % (what, e))
+                self.msg_q.put((self.status_line.notice, "%s failed: %s" % (what, e)))
         if self.server is None:
-            self.status.set("%s: not connected" % what)
+            self.status_line.notice("%s: not connected" % what)
             return
+        self.status_line.notice("%s: sent, waiting for the reply ..." % what)
         threading.Thread(target=run, daemon=True).start()
 
     def on_image_click(self, event):
@@ -277,7 +315,8 @@ class Viewer:
     def drain(self):
         try:
             while True:
-                self.status.set(self.msg_q.get_nowait())
+                show, text = self.msg_q.get_nowait()
+                show(text)
         except queue.Empty:
             pass
         try:
@@ -290,7 +329,7 @@ class Viewer:
                 self.add_perf(self.perf_q.get_nowait())
         except queue.Empty:
             pass
-        self.root.after(50, self.drain)
+        self.drain_id = self.root.after(50, self.drain)
 
     def describe(self, what, e):
         if "refused" in str(e) or "closed" in str(e) or "lost" in str(e):
@@ -299,18 +338,18 @@ class Viewer:
 
     def show_image(self, r):
         if isinstance(r, Exception):
-            self.status.set(self.describe("image", r))
+            self.status_line.alert(self.describe("image", r))
             return
         self.frames += 1
         self.photo = tk_photo_from_image(r, master=self.root)
         self.image_canvas.delete("all")
         self.image_canvas.create_image(0, 0, anchor="nw", image=self.photo)
-        self.status.set("frame %d  %dx%d  %.0f ms/request" % (
+        self.status_line.routine("frame %d  %dx%d  %.0f ms/request" % (
             self.frames, r.width, r.height, 1000 * self.image_poller.latency))
 
     def add_perf(self, r):
         if isinstance(r, Exception):
-            self.status.set(self.describe("perf", r))
+            self.status_line.alert(self.describe("perf", r))
             return
         if isinstance(r, tuple):
             snap, sd = r
@@ -326,12 +365,17 @@ class Viewer:
             self.columns.append(column_from_sumdetail(sd))
         elif snap is None:
             self.empty_perf += 1
+        off = []
         for name, ok in (("ep", self.has_ep_stream), ("objects", self.has_objects), ("grid", self.has_objects)):
             if not ok and str(self.view_buttons[name].cget("state")) != "disabled":
                 self.view_buttons[name].configure(state="disabled")
-                self.status.set(PANE_MISSING[name])
+                off.append(name)
                 if self.view.get() == name:
                     self.view.set("objects" if name == "ep" else "ep")
+        if off:             # one notice: a second one would replace the first at once
+            if "objects" in off and "grid" in off:
+                off = [n for n in off if n not in ("objects", "grid")] + ["objects+grid"]
+            self.status_line.notice("; ".join(PANE_MISSING[n] for n in off))
         self.redraw_bottom()
 
     def redraw_bottom(self):
@@ -492,6 +536,7 @@ class Viewer:
             if p is not None:
                 p.fn = None
                 p.join(timeout=2.0)
+        self.root.after_cancel(self.drain_id)     # else Tcl complains about a dead drain at exit
         self.root.destroy()
 
 

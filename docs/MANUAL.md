@@ -392,8 +392,8 @@ in the image adds 2000 particles" beside the controls shows the count.
 ### The bottom panes
 
 Radio buttons after "Load view:" choose one of three views. Both data
-sources are requested every second (`--perf-ms`, slower while requests
-are slow, as for the image), so flipping between views is immediate.
+sources are requested every second (`--perf-ms`), so flipping between
+views is immediate.
 
 - **by PE, last second, stacked by chare** (the default, `--pane objects`):
   one bar per PE whose height is that PE's utilization over the last

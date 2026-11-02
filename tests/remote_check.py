@@ -62,7 +62,7 @@ except (ValueError, ccsio.CcsError) as e:
 import argparse
 import tkinter as tk
 from appspector import viewer as V
-args = argparse.Namespace(host=host, port=port, key=key, size=(400, 300), image_ms=200, perf_ms=1000,
+args = argparse.Namespace(host=host, port=port, key=key, size=(400, 300), image_ms=200, perf_ms=1000, fixed_rate=False,
                           sts=None, no_image=False, no_perf=False, timeout=30.0, pane="objects",
                           inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
 root = tk.Tk()

@@ -1,3 +1,4 @@
+import argparse
 import os
 import struct
 import sys
@@ -79,6 +80,60 @@ class StatusLineTests(unittest.TestCase):
         self.assertEqual(self.var.text, "frame 5")
 
 
+class PacerTests(unittest.TestCase):
+    def test_fast_requests_keep_the_interval(self):
+        from appspector.viewer import Pacer
+        p = Pacer(0.2)
+        for _ in range(20):
+            self.assertAlmostEqual(p.wait(0.02), 0.18)
+
+    def test_slow_requests_back_off_to_the_latency(self):
+        from appspector.viewer import Pacer
+        p = Pacer(0.2)
+        self.assertAlmostEqual(p.wait(2.0), 2.0)        # first sample seeds the average
+        for _ in range(20):
+            w = p.wait(2.0)
+        self.assertAlmostEqual(w, 2.0)                  # idle as long as busy, not back to back
+
+    def test_backoff_is_capped(self):
+        from appspector.viewer import Pacer
+        p = Pacer(0.2, max_wait=5.0)
+        self.assertEqual(p.wait(30.0), 5.0)
+        self.assertEqual(Pacer(10.0, max_wait=5.0).wait(0.0), 10.0)   # the interval is never cut
+
+    def test_recovers_when_requests_speed_up(self):
+        from appspector.viewer import Pacer
+        p = Pacer(0.2)
+        for _ in range(10):
+            p.wait(2.0)
+        waits = [p.wait(0.02) for _ in range(15)]
+        self.assertGreater(waits[0], 1.0)               # smoothed: one fast request is not enough
+        self.assertTrue(all(a >= b for a, b in zip(waits, waits[1:])))
+        self.assertAlmostEqual(waits[-1], 0.18)
+
+    def test_fixed_rate(self):
+        from appspector.viewer import Pacer
+        p = Pacer(0.2, adaptive=False)
+        self.assertEqual(p.wait(2.0), 0.0)
+        self.assertAlmostEqual(p.wait(0.05), 0.15)
+
+    def test_poller_waits_after_a_slow_request(self):
+        import queue
+        from appspector.viewer import Poller
+
+        def fn():
+            time.sleep(0.03)
+            return 1
+        out = queue.Queue()
+        p = Poller(fn, 0.001, out)
+        p.start()
+        for _ in range(5):
+            out.get(timeout=5)
+        p.stop.set()
+        p.join(timeout=2)
+        self.assertGreaterEqual(p.period, 0.05)         # 30 ms request, then ~30 ms quiet
+
+
 @unittest.skipUnless(HAVE_TK, "no Tk display")
 class ViewerSmokeTest(unittest.TestCase):
     def test_polls_both_panes(self):
@@ -93,9 +148,9 @@ class ViewerSmokeTest(unittest.TestCase):
         srv.register(perf.HANDLER, lambda pe, d: perf_reply())
         srv.register("LBObjLoads", lambda pe, d: struct.pack("<i", 0))
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
-                perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="ep",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="ep",
                 inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
@@ -108,6 +163,9 @@ class ViewerSmokeTest(unittest.TestCase):
             self.assertGreaterEqual(len(v.columns), 2)
             self.assertEqual(v.columns[-1][0], {3: 60.0, 10000: 10.0})
             self.assertIn("frame", v.status.get())
+            # each utilization request drains one stored second; pacing would let them pile up
+            self.assertTrue(v.image_poller.pacer.adaptive)
+            self.assertFalse(v.perf_poller.pacer.adaptive)
             v.close()
         finally:
             srv.close()
@@ -136,9 +194,9 @@ class ObjectsPaneTest(unittest.TestCase):
             return out
         srv.register(objload.HANDLER, loads)
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
-                perf_ms=50, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="objects",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="objects",
                 inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()
@@ -185,9 +243,9 @@ class InteractionTest(unittest.TestCase):
         srv.register("pfieldInject", lambda pe, d: (seen.append(("inject", struct.unpack("!dddi", d))), b"injected 7")[1])
         srv.register("pfieldBalance", lambda pe, d: (seen.append(("balance", d)), b"balancing")[1])
         try:
-            args = V.main.__globals__["argparse"].Namespace(
+            args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(200, 100), image_ms=50,
-                perf_ms=50, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="objects",
+                perf_ms=50, fixed_rate=False, sts=None, no_image=False, no_perf=False, timeout=5.0, pane="objects",
                 inject="pfieldInject", inject_count=7, inject_sigma=0.05, balance="pfieldBalance")
             root = tk.Tk()
             root.withdraw()

@@ -29,7 +29,7 @@ else:
                            cwd=os.path.dirname(exe), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     time.sleep(2)
 try:
-    args = argparse.Namespace(host=host, port=port, key=None, size=(600, 600), image_ms=200, perf_ms=1000,
+    args = argparse.Namespace(host=host, port=port, key=None, size=(600, 600), image_ms=200, perf_ms=1000, fixed_rate=False,
                               sts=None, no_image=False, no_perf=False, timeout=20.0, pane="objects",
                               inject="pfieldInject", inject_count=3000, inject_sigma=0.03, balance="pfieldBalance")
     root = tk.Tk()

@@ -151,7 +151,7 @@ class FakeCcsServer:
         return b"".join(out)
 
 
-def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0):
+def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0, delay=0.0):
     """An lvImage handler like liveViz0.C: reads the version 1 or 2
     request and replies with a flat image of one pixel value (an RGB
     triple, or one int for greyscale). Compression 1 gets a Pillow JPEG at
@@ -160,12 +160,14 @@ def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0):
     it, jpeg="close" as reconverse does (it closes the socket with no
     reply). jpeg="hang" holds the request with no reply at all (a stuck
     job or forward). flaky closes the first that many JPEG requests, like
-    a hiccup of the forward, before answering. seen collects the
-    requests."""
+    a hiccup of the forward, before answering. delay (seconds) holds
+    every reply that long, like a slow link. seen collects the requests."""
     px = bytes(pixel) if isinstance(pixel, (tuple, list)) else bytes([pixel])
     misses = [flaky]
 
     def handler(pe, d):
+        if delay:
+            time.sleep(delay)
         version, code, w, h = struct.unpack("!iiii", d[:16])
         compression, quality = struct.unpack("!ii", d[16:24]) if version >= 2 else (0, 0)
         if seen is not None:

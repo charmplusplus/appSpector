@@ -390,8 +390,10 @@ cluster. `--jpeg` (quality 75, or `--jpeg 50` for another,
 that size; the viewer decodes them with Pillow. This needs the program's
 Charm++ built with libjpeg (see the table below). A JPEG request that
 gets no JPEG back is followed by a raw one for that frame. Until the first
-JPEG image arrives the viewer waits only 2 s for one (not `--timeout`),
-so a job that holds JPEG requests cannot stall every frame. After three
+JPEG image arrives the viewer waits only 2 s for one, or three times as
+long as the last raw image took if that is longer (not `--timeout`), so
+a job that holds JPEG requests cannot stall every frame while a slow
+link still gets its JPEG images. After three
 misses in a row (or at once if Pillow is missing) the viewer
 says so on the status line and requests raw images from then on. Once a JPEG image has
 arrived, a failed request is reported like any other.
@@ -457,6 +459,7 @@ returns the entry-method names).
 | `frame ...  JPEG qQ S KB` | the same with `--jpeg`: quality Q, S KB for the last image |
 | `frame ...  raw (JPEG try K of 3 failed)` | with `--jpeg`, the last JPEG request got no JPEG back, so this frame is raw; a hiccup of the forward, or the start of the case below |
 | `JPEG off: the job's liveViz cannot send JPEG ...` (held a few seconds), then `frame ...  raw (job has no JPEG)` | `--jpeg` was given but three JPEG requests in a row got none: the program's Charm++ has no libjpeg; images are raw |
+| `JPEG off: 3 JPEG requests in a row got no reply within T s ...`, then `frame ...  raw (JPEG timed out)` | `--jpeg` was given but no JPEG image came back in time: a stuck job or forward, or a link much slower for JPEG than for raw images. Start the viewer again to retry `--jpeg` |
 | `frame ...  raw (no Pillow for JPEG)`, after `...; JPEG off: Pillow is not installed, raw images` | `--jpeg` was given but Pillow is not installed on the laptop (`pip install Pillow`) |
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |

@@ -304,14 +304,14 @@ class JpegImageTest(unittest.TestCase):
     JPEG_TRIES JPEG attempts in a row came back empty, with the reason on
     the status line."""
 
-    def run_viewer(self, jpeg, quality=60, pillow=True, flaky=0, frames=6, probe=0.3):
+    def run_viewer(self, jpeg, quality=60, pillow=True, flaky=0, frames=6, probe=0.3, delay=0.0):
         from unittest import mock
         from fake_server import lv_image_handler
         from appspector import viewer as V
         seen = []
         srv = FakeCcsServer(node_sizes=(1,), close_on_unknown=(jpeg == "close"))
         srv.register("lvConfig", lambda pe, d: struct.pack("!iiii", 1, 1, 0, 0))
-        srv.register("lvImage", lv_image_handler(jpeg=jpeg, seen=seen, flaky=flaky))
+        srv.register("lvImage", lv_image_handler(jpeg=jpeg, seen=seen, flaky=flaky, delay=delay))
         try:
             args = argparse.Namespace(
                 host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=30,
@@ -347,9 +347,19 @@ class JpegImageTest(unittest.TestCase):
         seen, status, note = self.run_viewer("hang")
         self.assertEqual([r[1] for r in seen[:2 * JPEG_TRIES]], [1, 0] * JPEG_TRIES)
         self.assertTrue(all(r[:2] == (1, 0) for r in seen[2 * JPEG_TRIES:]), seen)
-        self.assertEqual(note, "  raw (job has no JPEG)")
-        self.assertIn("JPEG off", status)
+        self.assertEqual(note, "  raw (JPEG timed out)")
+        self.assertIn("got no reply within", status)
         self.assertLess(time.time() - t0, 4.5)     # the short probe timeout, not --timeout (5 s)
+
+    @unittest.skipUnless(V_HAVE_PIL, "no Pillow")
+    def test_slow_link_keeps_jpeg(self):
+        # every reply takes longer than the probe timeout: the first JPEG try
+        # times out, the raw frame after it sets the pace, and the next JPEG
+        # try gets JPEG_PROBE_RAW times that and succeeds
+        seen, status, note = self.run_viewer(True, frames=3, probe=0.3, delay=0.4)
+        self.assertEqual([r[1] for r in seen[:3]], [1, 0, 1])
+        self.assertIn("JPEG q60", note)
+        self.assertNotIn("JPEG off", status)
 
     def test_fallback_when_job_closes(self):
         from appspector.viewer import JPEG_TRIES

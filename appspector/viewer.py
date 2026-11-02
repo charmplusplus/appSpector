@@ -52,7 +52,8 @@ PANE_MISSING = {        # why a bottom-pane button is greyed out
 
 NOTICE_SECONDS = 4.5   # how long a notice holds the status line against routine updates
 JPEG_TRIES = 3          # JPEG requests in a row with no JPEG back before raw for good
-JPEG_PROBE_SECONDS = 2.0  # timeout for JPEG requests until the first JPEG frame
+JPEG_PROBE_SECONDS = 2.0  # least timeout for JPEG requests until the first JPEG frame
+JPEG_PROBE_RAW = 3        # ... or this many times the last raw request, if longer
 OTHER_COLOR = "#999999"
 IDLE_COLOR = "#f0f0f0"
 
@@ -275,6 +276,7 @@ class Viewer:
         self.jpeg = getattr(args, "jpeg", None)     # JPEG quality, None for raw pixels
         self.jpeg_ok = False                        # a JPEG frame has arrived
         self.jpeg_misses = 0                        # JPEG requests in a row that got no JPEG
+        self.raw_latency = 0.0                      # seconds the last raw image request took
         self.image_note = ""                        # end of the frame status line
         threading.Thread(target=self.connect, daemon=True).start()
         self.drain_id = root.after(50, self.drain)
@@ -369,7 +371,9 @@ class Viewer:
     def fetch_image(self):
         w, h = (max(1, v) for v in self.image_size)   # no Tk calls off the UI thread
         if self.jpeg is not None:
-            timeout = self.args.timeout if self.jpeg_ok else min(self.args.timeout, JPEG_PROBE_SECONDS)
+            timeout = self.args.timeout
+            if not self.jpeg_ok:
+                timeout = min(timeout, max(JPEG_PROBE_SECONDS, JPEG_PROBE_RAW * self.raw_latency))
             try:
                 img = liveviz.get_image(self.server, w, h, config=self.config, timeout=timeout,
                                         compression=liveviz.COMPRESS_JPEG, quality=self.jpeg)
@@ -381,24 +385,37 @@ class Viewer:
                 # bytes (liveViz0Deposit's default case), which classic
                 # Charm++ sends as an empty reply and reconverse as a close
                 # before any reply byte. Until the first JPEG frame a timeout
-                # (JPEG_PROBE_SECONDS, short) counts as a miss too, so a job
-                # that holds JPEG requests cannot stall every frame for
-                # --timeout. One miss may be a hiccup of the forward, so this
-                # frame comes raw and JPEG is given up for good only after
-                # JPEG_TRIES in a row. Once JPEG has worked the job has it:
-                # misses are reported as usual, as are refused connections.
+                # counts as a miss too, so a job that holds JPEG requests
+                # cannot stall every frame for --timeout. That timeout is
+                # JPEG_PROBE_SECONDS, or JPEG_PROBE_RAW times the last raw
+                # request if longer, so a slow link, where JPEG matters most,
+                # still gets its JPEG frames. One miss may be a hiccup of the
+                # forward, so this frame comes raw and JPEG is given up for
+                # good only after JPEG_TRIES in a row. Once JPEG has worked
+                # the job has it: misses are reported as usual, as are
+                # refused connections.
                 if self.jpeg_ok:
                     raise
                 self.jpeg_misses += 1
                 if self.jpeg_misses < JPEG_TRIES:
                     self.image_note = "  raw (JPEG try %d of %d failed)" % (self.jpeg_misses, JPEG_TRIES)
+                elif isinstance(e, ccsio.CcsTimeout):
+                    self.jpeg = None
+                    self.image_note = "  raw (JPEG timed out)"
+                    self.msg_q.put((self.status_line.notice,
+                                    "JPEG off: %d JPEG requests in a row got no reply within %.1f s, raw "
+                                    "images from now on (start the viewer again to retry --jpeg)"
+                                    % (JPEG_TRIES, timeout)))
                 else:
                     self.jpeg = None
                     self.image_note = "  raw (job has no JPEG)"
                     self.msg_q.put((self.status_line.notice,
                                     "JPEG off: the job's liveViz cannot send JPEG (Charm++ built without "
                                     "libjpeg?), raw images from now on (%s)" % e))
-        return liveviz.get_image(self.server, w, h, config=self.config, timeout=self.args.timeout)
+        t0 = time.monotonic()
+        img = liveviz.get_image(self.server, w, h, config=self.config, timeout=self.args.timeout)
+        self.raw_latency = time.monotonic() - t0
+        return img
 
     # -- UI thread ---------------------------------------------------------
 

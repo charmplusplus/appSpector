@@ -12,7 +12,21 @@ class CcsError(Exception):
     """Connection, protocol or authentication failure."""
 
 
-def _recv_exactly(sock, n):
+class CcsNoReply(CcsError):
+    """The server closed (or reset) the connection before the first reply
+    byte: what a handler that sends no reply, a rejected auth hash, or
+    a reconverse job without the handler looks like."""
+
+
+class CcsTimeout(CcsError):
+    """No reply within the timeout, the connection still open: a slow
+    job or forward, or a handler that holds a delayed-reply token and
+    never answers it."""
+
+
+def _recv_exactly(sock, n, first=False):
+    """n bytes from sock; first marks the read that starts a reply, so a
+    close before any byte of it raises CcsNoReply."""
     buf = bytearray()
     while len(buf) < n:
         try:
@@ -20,11 +34,13 @@ def _recv_exactly(sock, n):
         except socket.timeout:
             raise
         except OSError as e:
-            raise CcsError("connection lost after %d of %d bytes: %s"
-                           % (len(buf), n, e))
+            err = CcsNoReply if first and not buf else CcsError
+            raise err("connection lost after %d of %d bytes: %s"
+                      % (len(buf), n, e))
         if not chunk:
-            raise CcsError("connection closed after %d of %d bytes"
-                           % (len(buf), n))
+            err = CcsNoReply if first and not buf else CcsError
+            raise err("connection closed after %d of %d bytes"
+                      % (len(buf), n))
         buf += chunk
     return bytes(buf)
 
@@ -49,15 +65,15 @@ class Pending:
             if timeout is not None:
                 self._sock.settimeout(timeout)
             if self._key is not None:
-                given = _recv_exactly(self._sock, P.HASH_LEN)
+                given = _recv_exactly(self._sock, P.HASH_LEN, first=True)
                 if given != P.auth_hash(self._key, self._reply_salt):
                     raise CcsError("server's key does not match ours (reply)")
-            (n,) = struct.unpack("!i", _recv_exactly(self._sock, 4))
+            (n,) = struct.unpack("!i", _recv_exactly(self._sock, 4, first=self._key is None))
             if n < 0:
                 raise CcsError("negative reply length %d" % n)
             return _recv_exactly(self._sock, n)
         except socket.timeout:
-            raise CcsError("timed out waiting for reply")
+            raise CcsTimeout("timed out waiting for reply")
         finally:
             self.close()
 
@@ -227,7 +243,7 @@ class Server:
         try:
             return self.send(handler, pe, data).recv(t)
         except CcsError as e:
-            if self.key is None or "after 0 of" not in str(e):
+            if self.key is None or not isinstance(e, CcsNoReply):
                 raise                       # a real failure, or a reply was under way
             # The server closed without a reply: with a key that means it
             # rejected the hash because this identity's counter is out of

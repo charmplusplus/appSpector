@@ -56,6 +56,9 @@ retries once when the server drops a connection before any reply byte.
 from ccsio import liveviz, perf
 cfg = liveviz.get_config(s)                      # lvConfig
 img = liveviz.get_image(s, 400, 300, config=cfg) # lvImage; img.to_pil() needs Pillow
+img = liveviz.get_image(s, 400, 300, config=cfg, # the same as JPEG, decoded with Pillow;
+        compression=liveviz.COMPRESS_JPEG,       # needs a job whose Charm++ has libjpeg
+        quality=75)
 sd = perf.fetch(s)                               # "CkPerfSumDetail compressed", needs
                                                  # a job linked -tracemode utilization
 ```

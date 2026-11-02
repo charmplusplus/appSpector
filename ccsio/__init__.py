@@ -6,10 +6,10 @@ of Charm++ jobs, with the liveViz image and live-utilization payloads.
     print(s.num_pes, s.request("ping", 0, b"hi"))
 """
 
-from .client import CcsError, Pending, Server
+from .client import CcsError, CcsNoReply, CcsTimeout, Pending, Server
 from .protocol import BROADCAST, parse_key, parse_server_line
 from . import liveviz, objload, perf
 
-__all__ = ["Server", "Pending", "CcsError", "BROADCAST", "parse_key",
+__all__ = ["Server", "Pending", "CcsError", "CcsNoReply", "CcsTimeout", "BROADCAST", "parse_key",
            "parse_server_line", "liveviz", "objload", "perf"]
 __version__ = "0.1.0"

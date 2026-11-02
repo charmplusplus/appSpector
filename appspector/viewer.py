@@ -4,9 +4,12 @@
                                [--image-ms 200] [--perf-ms 1000] [--fixed-rate]
                                [--sts prog.util.sts] [--no-image] [--no-perf]
                                [--inject HANDLER] [--balance HANDLER]
+                               [--jpeg [QUALITY]]
 
 Top pane: the job's liveViz image (handlers lvConfig / lvImage), polled on a
-timer that backs off while requests are slow (see Pacer). Bottom pane
+timer that backs off while requests are slow (see Pacer), raw pixels
+unless --jpeg asks for JPEG (needs Pillow, and a Charm++ built with
+libjpeg; the viewer falls back to raw if either is missing). Bottom pane
 (default, --pane objects): a snapshot that changes once a second, one
 bar per PE whose height is the PE's utilization in the last interval,
 stacked from the time each chare ran, every chare in its own
@@ -48,6 +51,9 @@ PANE_MISSING = {        # why a bottom-pane button is greyed out
 }
 
 NOTICE_SECONDS = 4.5   # how long a notice holds the status line against routine updates
+JPEG_TRIES = 3          # JPEG requests in a row with no JPEG back before raw for good
+JPEG_PROBE_SECONDS = 2.0  # least timeout for JPEG requests until the first JPEG frame
+JPEG_PROBE_RAW = 3        # ... or this many times the last raw request, if longer
 OTHER_COLOR = "#999999"
 IDLE_COLOR = "#f0f0f0"
 
@@ -267,6 +273,11 @@ class Viewer:
         self.server = self.config = None
         self.frames = 0
         self.empty_perf = 0
+        self.jpeg = getattr(args, "jpeg", None)     # JPEG quality, None for raw pixels
+        self.jpeg_ok = False                        # a JPEG frame has arrived
+        self.jpeg_misses = 0                        # JPEG requests in a row that got no JPEG
+        self.raw_latency = 0.0                      # seconds the last raw image request took
+        self.image_note = ""                        # end of the frame status line
         threading.Thread(target=self.connect, daemon=True).start()
         self.drain_id = root.after(50, self.drain)
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -282,6 +293,10 @@ class Viewer:
                 self.config = liveviz.get_config(self.server)
                 msg += "; liveViz %s%s" % ("color" if self.config.is_color else "grey",
                                            ", push" if self.config.is_push else "")
+                if self.jpeg is not None and not pillow_available():
+                    self.jpeg = None
+                    self.image_note = "  raw (no Pillow for JPEG)"
+                    msg += "; JPEG off: Pillow is not installed, raw images"
                 self.image_poller = Poller(self.fetch_image, self.args.image_ms / 1000.0, self.image_q,
                                            adaptive=not self.args.fixed_rate)
                 self.image_poller.start()
@@ -355,7 +370,52 @@ class Viewer:
 
     def fetch_image(self):
         w, h = (max(1, v) for v in self.image_size)   # no Tk calls off the UI thread
-        return liveviz.get_image(self.server, w, h, config=self.config, timeout=self.args.timeout)
+        if self.jpeg is not None:
+            timeout = self.args.timeout
+            if not self.jpeg_ok:
+                timeout = min(timeout, max(JPEG_PROBE_SECONDS, JPEG_PROBE_RAW * self.raw_latency))
+            try:
+                img = liveviz.get_image(self.server, w, h, config=self.config, timeout=timeout,
+                                        compression=liveviz.COMPRESS_JPEG, quality=self.jpeg)
+                self.jpeg_ok, self.jpeg_misses = True, 0
+                self.image_note = "  JPEG q%d %.0f KB" % (self.jpeg, img.wire_bytes / 1024.0)
+                return img
+            except (ValueError, ccsio.CcsNoReply, ccsio.CcsTimeout) as e:
+                # A liveViz without libjpeg answers a JPEG request with 0
+                # bytes (liveViz0Deposit's default case), which classic
+                # Charm++ sends as an empty reply and reconverse as a close
+                # before any reply byte. Until the first JPEG frame a timeout
+                # counts as a miss too, so a job that holds JPEG requests
+                # cannot stall every frame for --timeout. That timeout is
+                # JPEG_PROBE_SECONDS, or JPEG_PROBE_RAW times the last raw
+                # request if longer, so a slow link, where JPEG matters most,
+                # still gets its JPEG frames. One miss may be a hiccup of the
+                # forward, so this frame comes raw and JPEG is given up for
+                # good only after JPEG_TRIES in a row. Once JPEG has worked
+                # the job has it: misses are reported as usual, as are
+                # refused connections.
+                if self.jpeg_ok:
+                    raise
+                self.jpeg_misses += 1
+                if self.jpeg_misses < JPEG_TRIES:
+                    self.image_note = "  raw (JPEG try %d of %d failed)" % (self.jpeg_misses, JPEG_TRIES)
+                elif isinstance(e, ccsio.CcsTimeout):
+                    self.jpeg = None
+                    self.image_note = "  raw (JPEG timed out)"
+                    self.msg_q.put((self.status_line.notice,
+                                    "JPEG off: %d JPEG requests in a row got no reply within %.1f s, raw "
+                                    "images from now on (start the viewer again to retry --jpeg)"
+                                    % (JPEG_TRIES, timeout)))
+                else:
+                    self.jpeg = None
+                    self.image_note = "  raw (job has no JPEG)"
+                    self.msg_q.put((self.status_line.notice,
+                                    "JPEG off: the job's liveViz cannot send JPEG (Charm++ built without "
+                                    "libjpeg?), raw images from now on (%s)" % e))
+        t0 = time.monotonic()
+        img = liveviz.get_image(self.server, w, h, config=self.config, timeout=self.args.timeout)
+        self.raw_latency = time.monotonic() - t0
+        return img
 
     # -- UI thread ---------------------------------------------------------
 
@@ -391,9 +451,9 @@ class Viewer:
         self.photo = tk_photo_from_image(r, master=self.root)
         self.image_canvas.delete("all")
         self.image_canvas.create_image(0, 0, anchor="nw", image=self.photo)
-        self.status_line.routine("frame %d  %dx%d  %.0f ms/request, every %.0f ms" % (
+        self.status_line.routine("frame %d  %dx%d  %.0f ms/request, every %.0f ms%s" % (
             self.frames, r.width, r.height, 1000 * self.image_poller.latency,
-            1000 * self.image_poller.period))
+            1000 * self.image_poller.period, self.image_note))
 
     def add_perf(self, r):
         if isinstance(r, Exception):
@@ -588,9 +648,24 @@ class Viewer:
         self.root.destroy()
 
 
+def pillow_available():
+    try:
+        import PIL.Image            # noqa: F401  (decodes JPEG frames)
+        return True
+    except ImportError:
+        return False
+
+
 def parse_size(s):
     w, h = s.lower().split("x")
     return int(w), int(h)
+
+
+def jpeg_quality(s):
+    q = int(s)
+    if not 1 <= q <= 100:
+        raise argparse.ArgumentTypeError("JPEG quality must be 1..100, not %d" % q)
+    return q
 
 
 def main(argv=None):
@@ -601,6 +676,9 @@ def main(argv=None):
     ap.add_argument("-k", "--key")
     ap.add_argument("--size", type=parse_size, default=(600, 400), help="initial image pane size, WxH")
     ap.add_argument("--image-ms", type=int, default=200, help="shortest image poll interval")
+    ap.add_argument("--jpeg", type=jpeg_quality, nargs="?", const=75, metavar="QUALITY",
+                    help="request JPEG images at this quality, 1..100 (75 if not given) instead of raw "
+                         "pixels; needs Pillow and a Charm++ built with libjpeg, else raw")
     ap.add_argument("--perf-ms", type=int, default=1000, help="shortest utilization poll interval")
     ap.add_argument("--fixed-rate", action="store_true",
                     help="poll images at --image-ms even when requests are slow (no backoff)")

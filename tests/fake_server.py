@@ -187,3 +187,39 @@ def lv_image_handler(pixel=(200, 30, 30), jpeg=True, seen=None, flaky=0, delay=0
             return out.getvalue()
         return {"hang": HANG, "close": None}.get(jpeg, b"")
     return handler
+
+
+def steer_handler(calls, eval_namespace=None, seen=None):
+    """A c4pSteer handler like charm4py.steer's: calls maps names to Python
+    functions, called with the request's args and kwargs; 'list' answers
+    names, signatures and docstrings; 'eval' works if eval_namespace is a
+    dict. Every reply is JSON {"ok": ..., "result" | "error": ...}. seen
+    collects the decoded requests."""
+    import inspect
+    import json
+    import traceback
+
+    def handler(pe, d):
+        try:
+            req = json.loads(d.rstrip(b"\0").decode("utf-8"))
+            if seen is not None:
+                seen.append(req)
+            name, args, kwargs = req["call"], req.get("args", []), req.get("kwargs", {})
+            if name == "list":
+                result = {"eval": eval_namespace is not None, "calls": [
+                    {"name": n, "signature": str(inspect.signature(f)), "doc": inspect.getdoc(f) or ""}
+                    for n, f in sorted(calls.items())]}
+            elif name == "eval":
+                if eval_namespace is None:
+                    raise PermissionError("eval is off: the program did not enable it")
+                result = eval(args[0], eval_namespace)
+            elif name in calls:
+                result = calls[name](*args, **kwargs)
+            else:
+                raise KeyError("no steering call '%s'" % name)
+            reply = {"ok": True, "result": result}
+        except Exception as e:
+            reply = {"ok": False, "error": "%s: %s" % (type(e).__name__, e),
+                     "traceback": traceback.format_exc()}
+        return json.dumps(reply).encode("utf-8")
+    return handler

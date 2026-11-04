@@ -1,10 +1,12 @@
 """The appSpector command shell: fire a job, see that it is up, open the
 viewer. Interaction with the running program (clicks, Balance, the load
-views) lives in the viewer window, not here.
+views) lives in the viewer window, except steering a charm4py program
+(`steer`), which works from here too.
 
     python3 -m appspector                 # interactive
     python3 -m appspector run --site delta --program pfield --pes 16 --args "-k 16"
     python3 -m appspector view 23143979   # one-shot forms of the same commands
+    python3 -m appspector steer 23143979 set_rate 0.5
 
 Shell commands:
     sites | site NAME | site fetch NAME [SSH:PATH]     choose or import a site
@@ -15,6 +17,7 @@ Shell commands:
     run [--no-auth]                                     submit; the shell says when the job is up
     jobs [all] | status [ID] | log [ID] | attach ID | stop [ID]   jobs: live ones; jobs all: ended ones too
     view [ID]                                           open the viewer window on the job
+    steer [list] | steer NAME [ARGS] [K=V] | steer eval SOURCE   call what a charm4py job exposes (charm4py.steer)
     quit
 """
 
@@ -48,6 +51,7 @@ class Shell(cmd.Cmd):
         self.current = None          # Job
         self.viewers = []
         self._waiters = []
+        self._steer_servers = {}     # job id -> ccsio.Server, kept between steer commands
 
     # -- helpers --------------------------------------------------------------
     def say(self, text):
@@ -323,11 +327,60 @@ entry in the site file can carry them as a third field so they apply every time.
         p = subprocess.Popen(cmdline)
         self.viewers.append(p)
 
+    def _reach(self, site, job):
+        """(host, port) of the job's CCS server for a steer command. A forward
+        already in place (the viewer's) is reused: registering another would
+        replace it (one forward per site), cutting the open viewer off."""
+        if site.scheduler != "local" and job.forward:
+            try:
+                local = int(job.forward.split(":")[0])
+            except ValueError:
+                local = 0
+            if local and not J._port_free(local):
+                return "127.0.0.1", local
+        return J.connect(site, job)
+
+    def do_steer(self, arg):
+        """steer [list]                 what the current job exposes (a charm4py program using charm4py.steer)
+steer NAME [ARGS...] [K=V...]  call one; each value is JSON if it parses (0.5, true, [1,2], "text"), else a string
+steer eval SOURCE              run Python on the job's PE 0 (only if the program allows it and the job runs with auth)
+The call runs in the job; the shell waits for its reply (up to the timeout, 60 s). Uses the job's key and
+its port forward (the viewer's, if one is open)."""
+        job = self.current
+        if job is None:
+            self.say("no current job ('run', or 'attach ID')")
+            return
+        if job.state != "up":
+            self.say("job %s is %s, not up" % (job.id, job.state))
+            return
+        import ccsio
+        from ccsio import steer
+        try:
+            steer.parse_command(arg)
+        except ValueError as e:
+            self.say("steer: %s" % e)
+            return
+        server = self._steer_servers.get(job.id)
+        try:
+            if server is None:
+                host, port = self._reach(self._site_of(job), job)
+                server = ccsio.Server(host, port, key=job.key or None)
+                self._steer_servers[job.id] = server
+            self.say(steer.run_command(server, arg))
+        except steer.SteerError as e:
+            self.say("steer: %s" % e.error)
+            if e.traceback:
+                self.say(e.traceback.rstrip())
+        except (ccsio.CcsError, L.LaunchError, OSError) as e:
+            self._steer_servers.pop(job.id, None)      # reconnect next time
+            self.say("steer: %s" % e)
+
     def do_stop(self, arg):
         """stop [ID]: cancel the job and its forward."""
         job = self._job(arg)
         if job:
             J.stop(self._site_of(job), job)
+            self._steer_servers.pop(job.id, None)
             self.say("stopped " + job.label())
 
     def do_quit(self, arg):
@@ -394,8 +447,29 @@ def one_shot(argv):
     return 0
 
 
+def steer_one_shot(words):
+    """python3 -m appspector steer ID [COMMAND...]: one steer command on a recorded job."""
+    if not words:
+        print("usage: python3 -m appspector steer JOB_ID [list | NAME ARGS... | eval SOURCE]", file=sys.stderr)
+        return 2
+    job = J.find_job(words[0])
+    if job is None:
+        print("appspector: no recorded job %s" % words[0], file=sys.stderr)
+        return 1
+    sh = Shell(job.site)
+    sh.current = job
+    out = []
+    sh.say = out.append
+    sh.do_steer(" ".join(shlex.quote(w) for w in words[1:]) if words[1:2] != ["eval"]
+                else "eval " + " ".join(words[2:]))
+    print("\n".join(out))
+    return 1 if out and out[0].startswith("steer: ") else 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["steer"]:
+        return steer_one_shot(argv[1:])
     if argv:
         return one_shot(argv)
     Shell().cmdloop()

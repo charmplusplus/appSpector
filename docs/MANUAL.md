@@ -214,8 +214,9 @@ compute node.
 ## The shell
 
 The shell is for firing jobs: choose a site, a program and a size, run
-it, and open the viewer when it is up. All interaction with the running
-program (clicks, Balance, the load views) is in the viewer.
+it, and open the viewer when it is up. Interaction with the running
+program (clicks, Balance, the load views) is in the viewer, except
+`steer`, which calls functions a charm4py program exposes.
 
 ```
 python3 -m appspector
@@ -254,6 +255,7 @@ appspector> quit                                # the job keeps running; 'stop' 
 | `log [ID]` | the last lines of the job's output |
 | `attach ID` | make a recorded job current, and wait for it if it is not up yet |
 | `view [ID] [-- VIEWER-ARGS]` | open the viewer on the job (registers the port forward first) |
+| `steer [list]`, `steer NAME [ARGS] [K=V]`, `steer eval SOURCE` | call a function a charm4py job exposes (see [Steering a charm4py program](#4-steering-a-charm4py-program)) |
 | `stop [ID]` | cancel the job and its forward |
 | `quit` | leave the shell; running jobs keep running |
 
@@ -303,6 +305,7 @@ python3 -m appspector stop ID
 python3 -m appspector jobs            # or: jobs all
 python3 -m appspector sites
 python3 -m appspector script --site delta --program pfield --pes 16
+python3 -m appspector steer ID set_rate 0.5     # or: steer ID list, steer ID eval SOURCE
 ```
 
 `run` submits, waits for the server (up to 6 hours, `--wait SECONDS`),
@@ -502,6 +505,7 @@ interval and the busiest PE.
 | `--inject-count N` | 2000 | particles per click |
 | `--inject-sigma F` | 0.03 | blob width as a fraction of the image |
 | `--balance HANDLER` | pfieldBalance | the CCS handler the Balance button sends to |
+| `--steer` | off | add a "Steer:" line for a charm4py program that uses `charm4py.steer`: it lists the exposed calls, and a line typed there (`NAME ARGS`, `list`, `eval SOURCE`) is sent on Enter, the reply going to the status line |
 
 The `.util.sts` file is written next to the program's binary, not in the
 working directory.
@@ -589,6 +593,88 @@ and answer with `CcsSendReply`. Handler names are at most 32 bytes.
 Give the viewer your handler names in the program entry's third field
 (`| --balance myBalance --inject myInject`) or on the command line
 (`view -- --balance myBalance`).
+
+### 4. Steering a charm4py program
+
+A charm4py program can expose Python functions that you call by name
+while it runs, from the shell (`steer`) or the viewer (`--steer`). This
+needs charm4py with the `charm4py.steer` module (branch `ccs-steer` of
+charm4py until it is merged). In the program:
+
+```python
+from charm4py import charm, Chare, Array, steer
+
+@steer.expose
+def set_rate(rate: float):
+    "Set the diffusion rate on every chare."
+    cells.set_rate(rate, awaitable=True).get()   # broadcast, wait for every chare
+    return rate
+
+def main(args):
+    global cells
+    cells = Array(Cell, 16)
+    steer.init()                 # registers the CCS handler c4pSteer on PE 0
+    ...
+charm.start(main)
+```
+
+Import `steer` at the top of the program (before `charm.start`), expose at
+module level or from `main`, and call `steer.init()` once in `main`. A
+function may block on futures (`awaitable=True`, `ret=True`,
+`charm.sleep`): each call runs in its own coroutine on PE 0 and the reply
+waits for it, while PE 0 keeps serving other requests (images, other
+calls). If it returns a charm4py Future, the reply carries the future's
+value. A function that computes for a long time without yielding holds
+PE 0 like any entry method.
+
+From the shell, for the current job (it uses the job's key, and the
+viewer's port forward if one is open):
+
+```
+appspector> steer
+  set_rate(rate: float)    Set the diffusion rate on every chare.
+  eval: off
+appspector> steer set_rate 0.5
+0.5
+appspector> steer set_rate -1
+steer: ValueError: rate must be positive
+Traceback (most recent call last): ...
+```
+
+Arguments are words as in a shell; each is a JSON value if it parses
+(`0.5`, `true`, `null`, `[1,2]`), else a string, and `NAME=VALUE` gives a
+keyword argument. For the string `"3"` quote the JSON quotes:
+`steer f '"3"'`. Results print as JSON. In scripts, `ccsio.steer` does the
+same: `steer.list(server)`, `steer.call(server, "set_rate", 0.5)`,
+`steer.eval(server, source)`; a failed call raises `steer.SteerError` with
+the job's error and traceback.
+
+**Wire format** (CCS handler `c4pSteer`, PE 0). The request is UTF-8 JSON
+`{"call": NAME, "args": [...], "kwargs": {...}}`; the reply is UTF-8 JSON,
+one per request: `{"ok": true, "result": VALUE}` or `{"ok": false,
+"error": "Type: message", "traceback": "..."}`. `list` and `eval` are
+built in: `list` answers `{"calls": [{"name", "signature", "doc"}, ...],
+"eval": true|false}`, and `eval` takes one argument, Python source, and
+answers the value of an expression or of a trailing expression statement.
+NumPy values come back as numbers and lists, anything else JSON cannot
+hold as its `repr`.
+
+**Security.** `++server-auth` (on by default for jobs `run` starts)
+authenticates every request: only someone with the job's key can call
+anything, and the replies prove the job has the key too. It does not
+encrypt: arguments and results cross the network in the clear, so keep
+the CCS port behind the ssh forward (which encrypts the laptop to login
+node leg) and on the cluster's internal network. Without
+`++server-auth`, anyone who can reach the port can call every exposed
+function. Expose only what a key holder may do; the key file stays mode
+600.
+
+`eval` runs arbitrary Python in the job with your account's rights:
+anyone with the key can do anything you can on the cluster. It is off
+unless the program asks for it, `steer.init(allow_eval=True)`, AND the
+job runs with `++server-auth`; with `allow_eval=True` and no auth the
+program prints a warning and eval stays off. `steer` (list) says whether
+it is on. Every eval is printed in the job's output.
 
 ## Troubleshooting
 

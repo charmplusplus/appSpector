@@ -73,6 +73,9 @@ class JobSpec:
         pes = self.pes or site.default_pes
         nodes = self.nodes or site.default_nodes
         ppn = self.procs_per_node or site.default_procs_per_node
+        prog = site.programs.get(self.program) if not self.command else None
+        if prog is not None and prog.one_pe_per_process() and not self.procs_per_node:
+            ppn = max(1, -(-pes // nodes))        # one process per PE (charm4py)
         procs = nodes * ppn
         # ask for the cores the PEs will use (PEs per process), not the whole
         # node share: on shared partitions a whole-node request can queue for
@@ -386,7 +389,18 @@ def stop(site, job):
     disconnect(site, job)
     if site.scheduler == "local":
         if job.pid and _pid_alive(job.pid):
-            os.kill(job.pid, 9)
+            # SIGTERM first: a launcher such as charm4py's charmrun.start forwards it to the
+            # processes it started; SIGKILL cannot be forwarded and would orphan them
+            os.kill(job.pid, 15)
+            t0 = time.time()
+            while _pid_alive(job.pid) and time.time() - t0 < 3:
+                try:
+                    os.waitpid(job.pid, os.WNOHANG)     # reap it if this process started it
+                except ChildProcessError:
+                    pass
+                time.sleep(0.1)
+            if _pid_alive(job.pid):
+                os.kill(job.pid, 9)
     else:
         L.ssh(site.ssh, "scancel %s" % job.id, check=False)
     job.state = "cancelled"

@@ -105,7 +105,8 @@ class Shell(cmd.Cmd):
     def do_program(self, arg):
         """program NAME [ARGS...]      what to run (a name from 'programs'); the rest is its arguments
 program /path/to/exe [ARGS...] an executable by path, run as ./exe ARGS +pe {pes} ++server ++server-port {port}
-program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site file ({args} {pes} {port} placeholders)"""
+program add NAME DIR | CMD [| VIEWER OPTIONS [| JOB OPTIONS]]   remember a program in your site file ({args} {pes} {port}
+    placeholders; job option procs=pes runs one process per PE, as charm4py needs)"""
         words = arg.split(None, 1)
         if not words:
             self.say("program %s %s" % (self.spec.program or self.spec.command, self.spec.args))
@@ -117,7 +118,8 @@ program add NAME DIR | CMD [| VIEWER OPTIONS]   remember a program in your site 
                 self.say("usage: program add NAME /path/to/dir | ./prog {args} +pe {pes} ++server ++server-port {port}")
                 return
             parts = [x.strip() for x in spec.split("|")]
-            path = S.add_program(self.site, name, parts[0], parts[1], parts[2] if len(parts) > 2 else "")
+            path = S.add_program(self.site, name, parts[0], parts[1], parts[2] if len(parts) > 2 else "",
+                                  parts[3] if len(parts) > 3 else "")
             self.say("added %s to %s" % (name, path))
             return
         if "/" in words[0]:

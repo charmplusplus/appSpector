@@ -1,0 +1,5 @@
+# trace files of the tracing charm4py build (run with +traceoff to keep them small)
+*.log.gz
+*.sts
+*.sum
+*.projrc

@@ -73,6 +73,9 @@ class JobSpec:
         pes = self.pes or site.default_pes
         nodes = self.nodes or site.default_nodes
         ppn = self.procs_per_node or site.default_procs_per_node
+        prog = site.programs.get(self.program) if not self.command else None
+        if prog is not None and prog.one_pe_per_process() and not self.procs_per_node:
+            ppn = max(1, -(-pes // nodes))        # one process per PE (charm4py)
         procs = nodes * ppn
         # ask for the cores the PEs will use (PEs per process), not the whole
         # node share: on shared partitions a whole-node request can queue for

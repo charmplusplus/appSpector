@@ -590,6 +590,64 @@ Give the viewer your handler names in the program entry's third field
 (`| --balance myBalance --inject myInject`) or on the command line
 (`view -- --balance myBalance`).
 
+## charm4py programs
+
+appSpector talks CCS, so a charm4py program (Python on Charm++) works too,
+with a few differences. Measured on Delta in November 2026 against Charm++
+recharm 5e3f7e4 (reconverse) and charm4py main; see
+[apps/c4p_demo/README.md](../apps/c4p_demo/README.md) for the numbers.
+
+**Setting up.** After `cluster/setup.sh`, run on the login node
+
+```
+bash cluster/charm4py.sh delta mzu
+```
+
+It makes `$WORK/charm4py`: a venv on the cluster's Python module
+(`PYTHON_MODULE` in `cluster/<site>.env`), a Charm++ clone built for the
+`charm4py` target (reconverse, tracing; 10 to 20 minutes the first time),
+charm4py itself, and `bin/c4p-python`, the venv's interpreter with the
+modules loaded, which batch jobs run. It adds two programs to the site
+file, so fetch it again on the laptop (`site fetch delta ...`):
+
+```
+c4p_demo    = {appspector}/apps/c4p_demo | /work/.../charm4py/bin/c4p-python c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port} | --inject c4pInject | procs=pes
+c4p_liveviz = /work/.../charm4py/src/examples/liveviz | /work/.../charm4py/bin/c4p-python liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port} | | procs=pes
+```
+
+Then `program c4p_demo`, `pes 4`, `run`, `view` as for any program.
+
+**One PE per process.** A charm4py process is one Python interpreter and
+runs one PE; several PEs in one process crash at startup. The fourth field
+of a program entry holds job options, and `procs=pes` makes the processes
+per node default to the PEs per node (so `pes 8` on one node runs 8
+processes with one core each). An explicit `ppn` still wins, so do not set
+one for these programs. For your own script:
+`program add mine /path/to/dir | /work/.../charm4py/bin/c4p-python mine.py {args} +pe {pes} ++server ++server-port {port} | | procs=pes`.
+
+**What works.** CCS itself, `++server-auth`, `num_pes`/`num_nodes` (the
+viewer's PE layout), liveViz images (`lvConfig`, `lvImage`, raw only), and
+CCS handlers the program registers with `charm.CcsRegisterHandler(name,
+fn)` and answers with `charm.CcsSendReply(bytes)`, so clicks work when the
+program has an inject handler (c4p_demo's `c4pInject`). The charm4py
+target has no utilization trace module: the "over time, by entry method"
+view stays empty (`CkPerfSumDetail` is not registered), and the per-PE
+bars come from `LBObjLoads`, which lists the chares but reports no load.
+There is no Balance handler.
+
+**Images are slow.** charm4py's liveViz assembles the image in Python,
+pixel by pixel, on PE 0, so a 1100x400 frame costs about a second on Delta
+(pfield: about 0.3 s, mostly the transfer). Requests are paced by the
+viewer's adaptive poller, so the program is not swamped, but expect about
+one frame a second. Stock charm4py main cannot make an image at all (a
+TypeError in `liveviz.py` aborts the job at the first request); use a
+charm4py with that fixed.
+
+**Tracing writes files.** The tracing build writes projections logs
+(`<script>.N.log.gz`, several MB a minute per PE) into the program's
+directory. `+traceoff` on the command line (the entries above have it)
+keeps them to a few KB.
+
 ## Troubleshooting
 
 - **`run` fails with ssh error 255, or hangs.** The Delta control master

@@ -103,19 +103,25 @@ step "programs in $WORK/site.ini"
 SITEFILE=$WORK/site.ini
 if [ -f "$SITEFILE" ]; then
   python - "$SITEFILE" "$C4P" "$SRC" <<'EOS'
-import configparser, sys
+import re, sys
+# edits the text in place (configparser would drop the file's comments); setup.sh writes
+# [programs] as the last section, so the entries are appended at the end
 path, c4p, src = sys.argv[1:4]
-cp = configparser.ConfigParser(interpolation=None)
-cp.read(path)
-if not cp.has_section("programs"):
-    cp.add_section("programs")
 py = c4p + "/bin/c4p-python"
-cp["programs"]["c4p_demo"] = ("{appspector}/apps/c4p_demo | %s c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
-                              " | --inject c4pInject | procs=pes" % py)
-cp["programs"]["c4p_liveviz"] = ("%s/examples/liveviz | %s liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
-                                 " | | procs=pes" % (src, py))
+entries = [
+    "c4p_demo = {appspector}/apps/c4p_demo | %s c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
+    " | --inject c4pInject | procs=pes" % py,
+    "c4p_liveviz = %s/examples/liveviz | %s liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
+    " | | procs=pes" % (src, py),
+]
+lines = [l for l in open(path).read().splitlines() if not re.match(r"\s*(c4p_demo|c4p_liveviz)\s*=", l)]
+while lines and not lines[-1].strip():
+    lines.pop()
+sections = [l.strip() for l in lines if l.strip().startswith("[")]
+if not sections or sections[-1] != "[programs]":
+    lines += ["", "[programs]"]
 with open(path, "w") as f:
-    cp.write(f)
+    f.write("\n".join(lines + entries) + "\n")
 print("added c4p_demo and c4p_liveviz to", path)
 EOS
 else

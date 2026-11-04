@@ -397,3 +397,60 @@ class JpegImageTest(unittest.TestCase):
         self.assertEqual(V.jpeg_quality("40"), 40)
         with self.assertRaises(argparse.ArgumentTypeError):
             V.jpeg_quality("0")
+
+
+@unittest.skipUnless(HAVE_TK, "no Tk display")
+class Charm4pyPanesTest(unittest.TestCase):
+    """A charm4py job that called charm4py.appspector.serve(): no Charm++
+    load handlers (reconverse closes the connection on them), its own three."""
+
+    def test_uses_the_charm4py_handlers(self):
+        from appspector import viewer as V
+        from ccsio import objload
+        import test_ccsio as T
+        srv = FakeCcsServer(node_sizes=(2,), close_on_unknown=True)
+        state = {"t": 0.0}
+
+        def loads(pe, d):
+            state["t"] += 1.0
+            t = state["t"]
+            out = struct.pack("<i", 2)
+            for p in (0, 1):
+                out += struct.pack("<idddi", p, 100.0 + t, t, (0.5 - 0.3 * p) * t, 1)
+                out += struct.pack("<QidB", p, 3, (0.5 + 0.3 * p) * t, 1)
+            return out
+        srv.register(perf.C4P_STS_HANDLER, lambda pe, d: T.PerfTests.C4P_STS)
+        srv.register(perf.C4P_HANDLER, lambda pe, d: T.PerfTests.C4P_SUMDETAIL)
+        srv.register(objload.C4P_HANDLER, loads)
+        try:
+            args = argparse.Namespace(
+                host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
+                perf_ms=50, fixed_rate=False, sts=None, no_image=True, no_perf=False, timeout=5.0, pane="ep",
+                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
+            root = tk.Tk()
+            root.withdraw()
+            v = V.Viewer(root, args)
+            deadline = time.time() + 5
+            while time.time() < deadline and (v.intervals < 3 or len(v.columns) < 2):
+                root.update()
+                time.sleep(0.02)
+            self.assertEqual(v.ep_handler, perf.C4P_HANDLER)
+            self.assertEqual(v.objload_handler, objload.C4P_HANDLER)
+            self.assertIn("charm4py loads", v.status.get())
+            self.assertEqual(perf.ep_name(v.names, 12), "Cell.work")
+            self.assertTrue(v.has_ep_stream and v.has_objects)
+            self.assertEqual(v.columns[-1][0], {12: 37.6, 13: 24.8})
+            iv = v.interval
+            self.assertAlmostEqual(iv.pes[0].utilization(), 0.5)
+            self.assertAlmostEqual(iv.pes[1].utilization(), 0.8)
+            for view in ("ep", "objects", "grid"):
+                v.view.set(view); v.redraw_bottom()
+                self.assertGreater(len(v.perf_canvas.find_all()), 3, view)
+            # the Charm++ handlers: only the names probe, once; nothing else
+            asked = [r[0] for r in srv.requests]
+            self.assertEqual(asked.count(perf.STS_HANDLER), 1)
+            for h in (perf.HANDLER, objload.TRACE_HANDLER, objload.LB_HANDLER):
+                self.assertNotIn(h, asked)
+            v.close()
+        finally:
+            srv.close()

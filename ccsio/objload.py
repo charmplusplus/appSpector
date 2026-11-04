@@ -1,6 +1,6 @@
 """Per-PE, per-object load snapshots: which chare ran how long on which PE.
 
-Two CCS handlers on PE 0 answer in the same layout, and fetch_any() takes
+Three CCS handlers on PE 0 answer in the same layout, and fetch_any() takes
 the first one the job has:
 
     "CkPerfObjLoads"  from trace-utilization (the job linked -tracemode
@@ -14,6 +14,12 @@ the first one the job has:
     "LBObjLoads"      from the LBManager (any Charm++ built from recharm
                       after 2026-10-23): whatever the load-balancing
                       database holds; empty while its instrumentation is off.
+    "charm4py ObjLoads" from charm4py programs that call
+                      charm4py.appspector.serve(): time in Python entry
+                      methods per chare, measured by charm4py. om is the
+                      array (or group) id, objId the element index packed
+                      into 64 bits (groups: the PE; singleton chares and
+                      the mainchare: om -1). Always little-endian.
 
 Reply, in the job's native byte order:
 
@@ -41,7 +47,11 @@ from typing import Dict, List, Tuple
 
 TRACE_HANDLER = "CkPerfObjLoads"
 LB_HANDLER = "LBObjLoads"
-HANDLERS = (TRACE_HANDLER, LB_HANDLER)   # preferred first
+C4P_HANDLER = "charm4py ObjLoads"
+# preferred first; a charm4py job is recognized by its sts handler first
+# (perf.C4P_STS_HANDLER), so C4P_HANDLER is probed last and costs C++ jobs
+# nothing until the other two have failed
+HANDLERS = (TRACE_HANDLER, LB_HANDLER, C4P_HANDLER)
 HANDLER = LB_HANDLER                     # the default for fetch()
 ObjKey = Tuple[int, int]      # (om group index, object id)
 

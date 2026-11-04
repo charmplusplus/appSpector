@@ -441,6 +441,7 @@ in the shell shows the job output alongside.
 | JPEG images (`--jpeg`) | a Charm++ whose configure found libjpeg's headers and library (`CMK_USE_LIBJPEG 1` in `<build>/include/conv-autoconfig.h`, `-ljpeg` in `<build>/lib/libmoduleliveViz.dep`); without it the program answers a JPEG request with nothing and prints `Ignoring liveViz client's unrecognized compressionType 1` in its output. The Delta build from `cluster/setup.sh` has it (`cluster/delta.env` points the build at Spack's libjpeg-turbo; a Delta build made before that does not, rebuild it); laptop builds made after `port install jpeg` do |
 | By-PE and PE-grid panes | linked `-tracemode utilization` (handler `CkPerfObjLoads`, from the trace events, unaffected by `+LBOff` or `LBTurnInstrumentOff`); without it, any Charm++ built from branch `recharm` after 2026-10-23 (handler `LBObjLoads`, which reports the load-balancing database and is empty while that instrumentation is off) |
 | Over-time pane | linked `-tracemode utilization` (Charm++ built `--enable-tracing`); a greyed-out button means the handler is missing and the status line says so |
+| All three load panes, charm4py | `from charm4py import appspector` at the top of the program and `appspector.serve()` once in `main` (see [charm4py programs](#charm4py-programs)) |
 | Inject click | a CCS handler like pfield's `pfieldInject`; other programs need their own, named with `--inject` |
 | Balance button | a balancer linked and selected with `+balancer`, plus a CCS handler that starts an LB step, named with `--balance` |
 
@@ -448,6 +449,47 @@ The CCS handlers behind these are `lvConfig` and `lvImage` (liveViz),
 `CkPerfObjLoads` or `LBObjLoads` (per-object loads), and `CkPerfSumDetail
 compressed` and `CkPerfSumDetail sts` (the utilization trace; the second
 returns the entry-method names).
+
+### charm4py programs
+
+A charm4py program feeds all three bottom panes from its own handlers once
+it opts in (charm4py branch `ccs-loads`, module `charm4py.appspector`):
+
+```python
+from charm4py import charm, appspector   # at top level, so every process registers it
+
+def main(args):
+    appspector.serve()     # once; returns when every PE is measuring
+    ...
+
+charm.start(main)
+```
+
+Run it with `++server ++server-port N` as usual. The viewer asks for
+`CkPerfSumDetail sts` first; when the job has no such handler it asks for
+`charm4py SumDetail sts`, and if that answers (the status line says
+`charm4py loads`) it uses `charm4py ObjLoads` and `charm4py SumDetail` for
+the rest of the session. Both use the Charm++ reply layouts, so the panes
+read them unchanged:
+
+- **by PE** and **PE grid**: the time each chare spent in Python entry
+  methods over the last interval, per PE. Array elements keep their color
+  across migration; group members and the mainchare (and charm4py's own
+  internal group, which runs future and reduction callbacks) appear as
+  chares too. Busy time is time inside entry methods, message unpickling
+  included; the rest of the wall time counts as idle.
+- **over time**: one column per poll (`--perf-ms`), the mean over PEs of
+  each Python entry method's share, named `Class.method`. Code a coroutine
+  runs after it resumes from a future or channel is charged to the entry
+  method it started in.
+
+The numbers are measured by charm4py around each entry method
+(`time.perf_counter()`), not by the Charm++ trace, so no tracing build is
+needed. Nothing is collected or sent until the viewer asks: each request
+is one broadcast and one gather over the PEs. A charm4py program that does
+not call `serve()` shows the by-PE and grid panes only if its Charm++ answers
+`LBObjLoads` (C++ load-balancing data, keyed by Charm++ ids), and no
+over-time pane.
 
 ### The status line
 
@@ -463,7 +505,8 @@ returns the entry-method names).
 | `frame ...  raw (no Pillow for JPEG)`, after `...; JPEG off: Pillow is not installed, raw images` | `--jpeg` was given but Pillow is not installed on the laptop (`pip install Pillow`) |
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
-| `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
+| `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization; charm4py: call charm4py.appspector.serve())` | the over-time button is greyed out |
+| `connected: ...; charm4py loads; K entry names` | a charm4py program serving its own loads (`charm4py.appspector.serve()`): all three panes come from it |
 | `'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out; when several panes go off at once, their messages share one line, separated by `;` |
 | `inject at (x, y): sent, waiting for the reply ...` | the click was sent; if nothing replaces it, the program has not answered (yet) |
 | `inject at (x, y): REPLY` | the program's reply to a click |

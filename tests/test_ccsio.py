@@ -362,6 +362,30 @@ class PerfTests(unittest.TestCase):
         finally:
             srv.close()
 
+    # Bytes written by charm4py.loadfmt (charm4py branch ccs-loads): pin the
+    # format the two repositories share.
+    C4P_STS = (b'ENTRY CHARE 12 "Cell.work" 0 0\nENTRY CHARE 13 "Cell.__init__" 0 0\n'
+               b'ENTRY CHARE 10001 "charm.scheduled callables" 0 0\nENTRY CHARE 10002 "resumed coroutine" 0 0\n')
+    # one bin, 2 PEs: Cell.work 37.5 %, Cell.__init__ 25 %
+    C4P_SUMDETAIL = bytes.fromhex("010000000200000002000c005e0d003e")
+
+    def test_charm4py_handlers(self):
+        srv = FakeCcsServer(node_sizes=(1,), close_on_unknown=True)
+        srv.register(perf.C4P_STS_HANDLER, lambda pe, d: self.C4P_STS)
+        srv.register(perf.C4P_HANDLER, lambda pe, d: self.C4P_SUMDETAIL)
+        try:
+            s = ccsio.Server("127.0.0.1", srv.port, timeout=5)
+            names = perf.fetch_sts(s, handler=perf.C4P_STS_HANDLER)
+            self.assertEqual(perf.ep_name(names, 12), "Cell.work")
+            self.assertEqual(perf.ep_name(names, 10002), "resumed coroutine")
+            sd = perf.fetch(s, handler=perf.C4P_HANDLER)
+            self.assertEqual((sd.num_bins, sd.num_procs), (1, 2))
+            self.assertEqual(sd.by_ep(), {12: 37.6, 13: 24.8})
+            with self.assertRaises(ccsio.CcsError):      # the C++ handler: not there
+                perf.fetch(s)
+        finally:
+            srv.close()
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -395,6 +419,36 @@ class ObjLoadTests(unittest.TestCase):
             snap, h = objload.fetch_any(s, h)              # settled: no probing
             self.assertEqual(h, objload.TRACE_HANDLER)
             self.assertEqual(srv.requests[-1][0], objload.TRACE_HANDLER)
+        finally:
+            srv.close()
+
+    # A reply written by charm4py.loadfmt.encode_objloads (charm4py branch
+    # ccs-loads): PE 0 with array 3 element (5,), group 7 and the mainchare;
+    # PE 1 with array 3 element (2, 3).
+    C4P_OBJLOADS = bytes.fromhex(
+        "02000000000000000000000000005940000000000000244000000000000010400300000005000000"
+        "0000000003000000000000000000044001000000000000000007000000000000000000f03f003412"
+        "000000000000ffffffff000000000000e03f00010000000000000000205940000000000000244000"
+        "0000000000f03f01000000030000000200000003000000000000000000224001")
+
+    def test_charm4py_reply(self):
+        snap = objload.decode(self.C4P_OBJLOADS)
+        self.assertEqual(sorted(snap.pes), [0, 1])
+        p0 = snap.pes[0]
+        self.assertEqual((p0.now, p0.total, p0.idle), (100.0, 10.0, 4.0))
+        self.assertEqual(p0.objs, {(3, 5): 2.5, (7, 0): 1.0, (-1, 0x1234): 0.5})
+        self.assertEqual(p0.migratable, {(3, 5): True, (7, 0): False, (-1, 0x1234): False})
+        self.assertEqual(snap.pes[1].objs, {(3, (2 << 32) | 3): 9.0})
+
+    def test_fetch_any_finds_charm4py_last(self):
+        srv = FakeCcsServer(close_on_unknown=True)
+        srv.register(objload.C4P_HANDLER, lambda pe, d: self.C4P_OBJLOADS)
+        try:
+            s = ccsio.Server("127.0.0.1", srv.port)
+            snap, h = objload.fetch_any(s)
+            self.assertEqual((h, snap.num_objs), (objload.C4P_HANDLER, 4))
+            self.assertEqual([r[0] for r in srv.requests if r[0] != "ccs_getinfo"],
+                             [objload.TRACE_HANDLER, objload.LB_HANDLER, objload.C4P_HANDLER])
         finally:
             srv.close()
 

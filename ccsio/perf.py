@@ -22,6 +22,14 @@ ints; every machine we run on is little-endian):
 Entry methods below 10 percent of a bin are folded into ep 10000 ("other").
 Entry-method names come from the ``<program>.util.sts`` file PE 0 writes
 at startup (same format as the summary/projections sts files).
+
+charm4py programs that call ``charm4py.appspector.serve()`` answer the same
+layout (little-endian) under their own names, C4P_HANDLER and
+C4P_STS_HANDLER: one bin per reply, the mean over PEs of each Python entry
+method's share of the wall time since the previous request (so the reply
+covers whatever interval the client polls at), and names "Class.method".
+Their ep indices are charm4py's; 10001 and 10002 are pseudo entries
+(scheduled callables, a resumed coroutine of unknown origin).
 """
 
 import re
@@ -33,6 +41,8 @@ OTHER_EP = 10000
 BIN_SECONDS = 0.001
 HANDLER = "CkPerfSumDetail compressed"
 STS_HANDLER = "CkPerfSumDetail sts"
+C4P_HANDLER = "charm4py SumDetail"           # charm4py.appspector
+C4P_STS_HANDLER = "charm4py SumDetail sts"
 UTIL_SCALE = 2.5
 
 
@@ -86,9 +96,9 @@ def decode_sumdetail(data, byteorder="<"):
     return SumDetail(num_procs, bins)
 
 
-def fetch(server, timeout=None):
+def fetch(server, timeout=None, handler=HANDLER):
     """One request to the handler; None when the job has nothing queued."""
-    return decode_sumdetail(server.request(HANDLER, 0, timeout=timeout))
+    return decode_sumdetail(server.request(handler, 0, timeout=timeout))
 
 
 _ENTRY = re.compile(r"^ENTRY\s+\S+\s+(\d+)\s+(.*?)\s+(-?\d+)\s+(-?\d+)\s*$")
@@ -117,11 +127,13 @@ def read_sts_entries(path):
         return parse_sts_entries(f.read())
 
 
-def fetch_sts(server, timeout=None):
+def fetch_sts(server, timeout=None, handler=STS_HANDLER):
     """Entry-method names over CCS (handler "CkPerfSumDetail sts", jobs
-    built from charm PR branch trace-utilization-sts-handler or later).
-    Returns {} when the job has no such handler (empty reply)."""
-    reply = server.request(STS_HANDLER, 0, timeout=timeout)
+    built from charm PR branch trace-utilization-sts-handler or later;
+    C4P_STS_HANDLER for charm4py). Returns {} when the job has no such
+    handler and answers with an empty reply (classic Charm++); reconverse
+    closes the connection instead (CcsError)."""
+    reply = server.request(handler, 0, timeout=timeout)
     return parse_sts_entries(reply.decode("utf-8", "replace"))
 
 

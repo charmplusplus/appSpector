@@ -18,7 +18,11 @@ shows one stacked column per second of utilization by entry method,
 scrolling left (handler "CkPerfSumDetail compressed", needs -tracemode
 utilization). --pane grid shows every PE (or every process) as a square
 in a square-ish layout, colored from blue (idle) to red (100 percent
-busy) by its utilization over the last interval. A click in the image pane sends an inject request to the job (handler
+busy) by its utilization over the last interval. A charm4py program
+that calls charm4py.appspector.serve() feeds all three panes from its own
+handlers ("charm4py ObjLoads", "charm4py SumDetail", same formats, Python
+chares and entry methods); the viewer recognizes it by its names handler
+"charm4py SumDetail sts" when the job has no "CkPerfSumDetail sts". A click in the image pane sends an inject request to the job (handler
 "pfieldInject" by default: x, y, sigma as fractions of the image, and a
 count, network order) and the Balance button sends "pfieldBalance"; both
 are no-ops on jobs without those handlers. All CCS traffic runs on worker
@@ -44,7 +48,8 @@ PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948",
            "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac", "#1f77b4", "#aec7e8",
            "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5"]
 PANE_MISSING = {        # why a bottom-pane button is greyed out
-    "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
+    "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization; "
+          "charm4py: call charm4py.appspector.serve())",
     "objects": "'by PE' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "grid": "'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "objects+grid": "'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
@@ -265,6 +270,7 @@ class Viewer:
         self.has_ep_stream = False
         self.has_objects = True
         self.objload_handler = None     # settled by the first successful fetch (objload.fetch_any)
+        self.ep_handler = perf.HANDLER  # perf.C4P_HANDLER for a charm4py job (see connect)
         self.ep_colors = {}
         self.names = perf.read_sts_entries(args.sts) if args.sts else {}
         self.image_q, self.perf_q = queue.Queue(), queue.Queue()
@@ -302,10 +308,16 @@ class Viewer:
                 self.image_poller.start()
             if not self.args.no_perf:
                 if not self.names:
-                    try:
-                        self.names = perf.fetch_sts(self.server)
-                    except ccsio.CcsError:        # job has no sts handler
-                        self.names = {}
+                    self.names = self.fetch_names(perf.STS_HANDLER)
+                    if not self.names:
+                        # a charm4py job that serves its own loads
+                        # (charm4py.appspector.serve()): its handlers from here on
+                        names = self.fetch_names(perf.C4P_STS_HANDLER)
+                        if names:
+                            self.names = names
+                            self.ep_handler = perf.C4P_HANDLER
+                            self.objload_handler = objload.C4P_HANDLER
+                            msg += "; charm4py loads"
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,
@@ -314,6 +326,14 @@ class Viewer:
             self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:
             self.msg_q.put((self.status_line.alert, "error: %s" % e))
+
+    def fetch_names(self, handler):
+        """Entry-method names from an sts handler, {} if the job has none
+        (an empty reply, or a closed connection on reconverse)."""
+        try:
+            return perf.fetch_sts(self.server, timeout=self.args.timeout, handler=handler)
+        except ccsio.CcsError:
+            return {}
 
     # -- interaction with the application ---------------------------------
 
@@ -363,7 +383,7 @@ class Viewer:
         sd = None
         if self.has_ep_stream:
             try:
-                sd = perf.fetch(self.server, timeout=self.args.timeout)
+                sd = perf.fetch(self.server, timeout=self.args.timeout, handler=self.ep_handler)
             except (ValueError, ccsio.CcsError):
                 self.has_ep_stream = False
         return (snap, sd)

@@ -4,7 +4,7 @@
                                [--image-ms 200] [--perf-ms 1000] [--fixed-rate]
                                [--sts prog.util.sts] [--no-image] [--no-perf]
                                [--inject HANDLER] [--balance HANDLER]
-                               [--jpeg [QUALITY]]
+                               [--jpeg [QUALITY]] [--steer]
 
 Top pane: the job's liveViz image (handlers lvConfig / lvImage), polled on a
 timer that backs off while requests are slow (see Pacer), raw pixels
@@ -18,10 +18,16 @@ shows one stacked column per second of utilization by entry method,
 scrolling left (handler "CkPerfSumDetail compressed", needs -tracemode
 utilization). --pane grid shows every PE (or every process) as a square
 in a square-ish layout, colored from blue (idle) to red (100 percent
-busy) by its utilization over the last interval. A click in the image pane sends an inject request to the job (handler
+busy) by its utilization over the last interval. A charm4py program
+that calls charm4py.appspector.serve() feeds all three panes from its own
+handlers ("charm4py ObjLoads", "charm4py SumDetail", same formats, Python
+chares and entry methods); the viewer recognizes it by its names handler
+"charm4py SumDetail sts" when the job has no "CkPerfSumDetail sts". A click in the image pane sends an inject request to the job (handler
 "pfieldInject" by default: x, y, sigma as fractions of the image, and a
 count, network order) and the Balance button sends "pfieldBalance"; both
-are no-ops on jobs without those handlers. All CCS traffic runs on worker
+are no-ops on jobs without those handlers. --steer adds a line for steering a
+charm4py program (charm4py.steer): type 'NAME ARGS', 'list' or 'eval SOURCE'
+and Enter; the reply shows on the status line. All CCS traffic runs on worker
 threads; the UI thread only draws.
 """
 
@@ -38,13 +44,14 @@ from tkinter import ttk
 import ccsio
 import colorsys
 
-from ccsio import liveviz, objload, perf
+from ccsio import liveviz, objload, perf, steer
 
 PALETTE = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948",
            "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac", "#1f77b4", "#aec7e8",
            "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5"]
 PANE_MISSING = {        # why a bottom-pane button is greyed out
-    "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)",
+    "ep": "'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization; "
+          "charm4py: call charm4py.appspector.serve())",
     "objects": "'by PE' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "grid": "'PE grid' pane off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
     "objects+grid": "'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)",
@@ -251,6 +258,16 @@ class Viewer:
         self.balance_button.pack(side=tk.RIGHT, padx=6)
         ttk.Label(controls, text="click in the image adds %d particles" % args.inject_count).pack(side=tk.RIGHT, padx=6)
         self.image_canvas.bind("<Button-1>", self.on_image_click)
+        self.steer_entry = self.steer_calls = None
+        if getattr(args, "steer", False):
+            row = ttk.Frame(bottom)
+            row.pack(fill=tk.X)
+            ttk.Label(row, text="Steer:").pack(side=tk.LEFT, padx=(6, 2))
+            self.steer_entry = ttk.Entry(row, width=40)
+            self.steer_entry.pack(side=tk.LEFT, padx=2)
+            self.steer_entry.bind("<Return>", lambda e: self.request_steer(self.steer_entry.get()))
+            self.steer_calls = tk.StringVar(value="NAME ARGS, list, or eval SOURCE; Enter sends")
+            ttk.Label(row, textvariable=self.steer_calls).pack(side=tk.LEFT, padx=6)
         self.perf_canvas = tk.Canvas(bottom, height=220, bg="white", highlightthickness=0)
         self.perf_canvas.pack(fill=tk.BOTH, expand=True)
         self.perf_canvas.bind("<Configure>", lambda e: self.redraw_bottom())
@@ -265,6 +282,7 @@ class Viewer:
         self.has_ep_stream = False
         self.has_objects = True
         self.objload_handler = None     # settled by the first successful fetch (objload.fetch_any)
+        self.ep_handler = perf.HANDLER  # perf.C4P_HANDLER for a charm4py job (see connect)
         self.ep_colors = {}
         self.names = perf.read_sts_entries(args.sts) if args.sts else {}
         self.image_q, self.perf_q = queue.Queue(), queue.Queue()
@@ -301,11 +319,18 @@ class Viewer:
                                            adaptive=not self.args.fixed_rate)
                 self.image_poller.start()
             if not self.args.no_perf:
-                if not self.names:
-                    try:
-                        self.names = perf.fetch_sts(self.server)
-                    except ccsio.CcsError:        # job has no sts handler
-                        self.names = {}
+                # probed even when --sts gave the names: the probe also tells a charm4py
+                # job that serves its own loads (charm4py.appspector.serve()) from a
+                # Charm++ one, and such a job needs its own handlers from here on
+                names = self.fetch_names(perf.STS_HANDLER)
+                if not names:
+                    names = self.fetch_names(perf.C4P_STS_HANDLER)
+                    if names:
+                        self.ep_handler = perf.C4P_HANDLER
+                        self.objload_handler = objload.C4P_HANDLER
+                        msg += "; charm4py loads"
+                if not self.names:          # the --sts file's names win
+                    self.names = names
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,
@@ -314,6 +339,23 @@ class Viewer:
             self.msg_q.put((self.status_line.alert, msg))
         except Exception as e:
             self.msg_q.put((self.status_line.alert, "error: %s" % e))
+            return
+        if self.steer_calls is not None:
+            try:
+                listing = steer.list(self.server, timeout=self.args.timeout)
+                names = ", ".join(c["name"] + c.get("signature", "") for c in listing.get("calls", []))
+                text = "calls: %s%s" % (names or "none", "; eval on" if listing.get("eval") else "")
+            except ccsio.CcsError as e:
+                text = "no steering: %s" % e
+            self.msg_q.put((self.steer_calls.set, text))
+
+    def fetch_names(self, handler):
+        """Entry-method names from an sts handler, {} if the job has none
+        (an empty reply, or a closed connection on reconverse)."""
+        try:
+            return perf.fetch_sts(self.server, timeout=self.args.timeout, handler=handler)
+        except ccsio.CcsError:
+            return {}
 
     # -- interaction with the application ---------------------------------
 
@@ -347,6 +389,31 @@ class Viewer:
     def request_balance(self):
         self._oneway(self.args.balance, b"", "balance")
 
+    def request_steer(self, line):
+        """The steer line: one charm4py.steer call on its own thread (like
+        _oneway), its result or error to the status line."""
+        what = "steer " + (line.strip() or "list")
+        try:
+            steer.parse_command(line)
+        except ValueError as e:
+            self.status_line.notice("%s: %s" % (what, e))
+            return
+        if self.server is None:
+            self.status_line.notice("%s: not connected" % what)
+            return
+
+        def run():
+            try:
+                text = steer.run_command(self.server, line, timeout=self.args.timeout)
+                text = " | ".join(t.strip() for t in text.splitlines())
+            except steer.SteerError as e:
+                text = "failed: %s" % e.error
+            except Exception as e:
+                text = "failed: %s" % e
+            self.msg_q.put((self.status_line.notice, "%s: %s" % (what, text)))
+        self.status_line.notice("%s: sent, waiting for the reply ..." % what)
+        threading.Thread(target=run, daemon=True).start()
+
     def fetch_loads(self):
         """One tick of the bottom pane: the LBObjLoads snapshot, and the
         entry-method second if the job streams it (-tracemode utilization).
@@ -363,7 +430,7 @@ class Viewer:
         sd = None
         if self.has_ep_stream:
             try:
-                sd = perf.fetch(self.server, timeout=self.args.timeout)
+                sd = perf.fetch(self.server, timeout=self.args.timeout, handler=self.ep_handler)
             except (ValueError, ccsio.CcsError):
                 self.has_ep_stream = False
         return (snap, sd)
@@ -693,6 +760,8 @@ def main(argv=None):
     ap.add_argument("--inject-count", type=int, default=2000, help="particles per click")
     ap.add_argument("--inject-sigma", type=float, default=0.03, help="blob width as a fraction of the image")
     ap.add_argument("--balance", default="pfieldBalance", help="CCS handler the Balance button sends to")
+    ap.add_argument("--steer", action="store_true",
+                    help="add a line for steering a charm4py program (charm4py.steer: handler c4pSteer)")
     args = ap.parse_args(argv)
     root = tk.Tk()
     Viewer(root, args)

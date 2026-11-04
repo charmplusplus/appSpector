@@ -73,6 +73,21 @@ class JobSpec:
         pes = self.pes or site.default_pes
         nodes = self.nodes or site.default_nodes
         ppn = self.procs_per_node or site.default_procs_per_node
+        prog = site.programs.get(self.program) if not self.command else None
+        if prog is not None and prog.one_pe_per_process():
+            # one process per PE (charm4py: a process runs exactly one PE, more crash at start),
+            # so the PEs must split evenly over the nodes and an explicit ppn must agree
+            if pes % nodes:
+                lo, hi = pes - pes % nodes, pes + nodes - pes % nodes
+                raise ValueError("%s runs one process per PE (procs=pes), and %d PEs do not split evenly over "
+                                 "%d nodes: set 'pes' to a multiple of %d (%s%d), or change 'nodes'"
+                                 % (self.program, pes, nodes, nodes, ("%d or " % lo) if lo else "", hi))
+            if self.procs_per_node and nodes * self.procs_per_node != pes:
+                raise ValueError("%s runs one process per PE (procs=pes), but ppn %d on %d node(s) makes %d "
+                                 "processes for %d PEs: set 'ppn 0' to let it follow the PEs (%d per node)"
+                                 % (self.program, self.procs_per_node, nodes, nodes * self.procs_per_node,
+                                    pes, pes // nodes))
+            ppn = pes // nodes
         procs = nodes * ppn
         # ask for the cores the PEs will use (PEs per process), not the whole
         # node share: on shared partitions a whole-node request can queue for
@@ -270,7 +285,10 @@ def _start_local(site, spec, log):
         key = new_key()
         write_key_file(v["keyfile"], key)
     with open(out, "w") as f:
-        proc = subprocess.Popen(command, shell=True, cwd=directory, stdout=f, stderr=subprocess.STDOUT)
+        # its own session and process group (pgid = pid): stop() signals the whole group, the
+        # shell and everything the command started (charmrun.start and its processes, say)
+        proc = subprocess.Popen(command, shell=True, cwd=directory, stdout=f, stderr=subprocess.STDOUT,
+                                start_new_session=True)
     job = Job(id="local-%d" % proc.pid, site=site.name, program=spec.program or spec.command, args=spec.args,
               pes=v["pes"], port=v["port"], out=out, submitted=time.time(), pid=proc.pid, state="running",
               viewer_args=site.programs[spec.program].viewer_args if spec.program in site.programs else "",
@@ -354,8 +372,11 @@ def server(site, job, **kw):
 
 
 def disconnect(site, job):
+    """Cancel the job's forward, if it is still the registered one (a later
+    connect for another job has replaced it otherwise, and that one stays)."""
     if site.scheduler != "local" and job.forward:
-        L.forward_cancel(site.ssh)
+        if L.forward_current() == job.forward:
+            L.forward_cancel(site.ssh)
         job.forward = ""
         record(job)
 
@@ -386,11 +407,62 @@ def stop(site, job):
     disconnect(site, job)
     if site.scheduler == "local":
         if job.pid and _pid_alive(job.pid):
-            os.kill(job.pid, 9)
+            _stop_local(job.pid)
     else:
         L.ssh(site.ssh, "scancel %s" % job.id, check=False)
     job.state = "cancelled"
     record(job)
+
+
+def _stop_local(pid, grace=3.0):
+    """SIGTERM to the job's process group, then SIGKILL to what is left
+    after ``grace`` seconds. The group holds the shell that ran the command
+    and everything it started, so a launcher's processes get the signal
+    themselves rather than relying on the launcher to pass it on. A job
+    started before jobs had their own group (pgid != pid) gets the signals
+    to its pid only."""
+    import signal
+    try:
+        own_group = os.getpgid(pid) == pid
+    except OSError:
+        return
+
+    def send(sig):
+        try:
+            if own_group:
+                os.killpg(pid, sig)
+            else:
+                os.kill(pid, sig)
+        except OSError:
+            pass
+
+    def alive():
+        if own_group:
+            try:
+                os.killpg(pid, 0)
+                return True
+            except OSError:
+                return False
+        return _pid_alive(pid)
+
+    def reap():
+        try:
+            os.waitpid(pid, os.WNOHANG)       # the shell, if this process started it
+        except ChildProcessError:
+            pass
+
+    send(signal.SIGTERM)
+    t0 = time.time()
+    while time.time() - t0 < grace:
+        reap()
+        if not alive():
+            return
+        time.sleep(0.1)
+    send(signal.SIGKILL)
+    t0 = time.time()
+    while alive() and time.time() - t0 < 1.0:
+        reap()
+        time.sleep(0.05)
 
 
 def log_tail(site, job, lines=20):

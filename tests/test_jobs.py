@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -27,6 +28,7 @@ port = 1234
 [programs]
 pfield = {appspector}/apps/pfield | ./pfield {args} +pe {pes} ++server ++server-port {port} +balancer GreedyRefineLB
 wave2d = {work}/charm/examples/charm++/wave2d | ./wave2d-demo +pe {pes} ++server ++server-port {port}
+c4p_demo = {appspector}/apps/c4p_demo | {work}/charm4py/bin/c4p-python c4p_demo.py {args} +pe {pes} ++server ++server-port {port} | --inject c4pInject | procs=pes
 """
 
 
@@ -80,6 +82,33 @@ class SiteTests(unittest.TestCase):
         d, c, v = J.JobSpec(program="pfield", auth=True).resolve(off, "S1")
         self.assertIn("++server-auth /work/alloc/me/appspector/jobs/pfield-S1.key", c)
 
+    def test_one_pe_per_process(self):
+        p = self.site.programs["c4p_demo"]
+        self.assertEqual((p.viewer_args, p.options), ("--inject c4pInject", "procs=pes"))
+        self.assertTrue(p.one_pe_per_process())
+        self.assertFalse(self.site.programs["pfield"].one_pe_per_process())
+        d, c, v = J.JobSpec(program="c4p_demo", pes=8, auth=False).resolve(self.site)
+        self.assertEqual((v["procs"], v["cores_per_proc"]), (8, 1))       # not the site's 2 per node
+        self.assertEqual(c, "/work/alloc/me/appspector/charm4py/bin/c4p-python c4p_demo.py  +pe 8 ++server ++server-port 1234")
+        d, c, v = J.JobSpec(program="c4p_demo", pes=8, nodes=2, auth=False).resolve(self.site)
+        self.assertEqual((v["procs"], v["cores_per_proc"]), (8, 1))       # 4 per node
+        d, c, v = J.JobSpec(program="c4p_demo", pes=8, nodes=2, procs_per_node=4, auth=False).resolve(self.site)
+        self.assertEqual(v["procs"], 8)                                    # an explicit ppn that agrees
+        with self.assertRaises(ValueError) as e:                           # 2 processes for 8 PEs: refused
+            J.JobSpec(program="c4p_demo", pes=8, procs_per_node=2, auth=False).resolve(self.site)
+        self.assertIn("ppn 2 on 1 node(s) makes 2 processes for 8 PEs", str(e.exception))
+        self.assertIn("'ppn 0'", str(e.exception))
+        with self.assertRaises(ValueError) as e:                           # 5 PEs over 2 nodes
+            J.JobSpec(program="c4p_demo", pes=5, nodes=2, auth=False).resolve(self.site)
+        self.assertIn("5 PEs do not split evenly over 2 nodes: set 'pes' to a multiple of 2 (4 or 6)",
+                      str(e.exception))
+        with self.assertRaises(ValueError) as e:                           # fewer PEs than nodes
+            J.JobSpec(program="c4p_demo", pes=2, nodes=4, auth=False).resolve(self.site)
+        self.assertIn("a multiple of 4 (4)", str(e.exception))
+        script, _, _ = J.render_batch(self.site, J.JobSpec(program="c4p_demo", pes=4), stamp="S1")
+        self.assertIn("#SBATCH --ntasks=4", script)
+        self.assertIn("srun --mpi=pmix -n 4 -c 1 /work/alloc/me/appspector/charm4py/bin/c4p-python c4p_demo.py", script)
+
     def test_render_batch(self):
         script, out, v = J.render_batch(self.site, J.JobSpec(program="pfield", pes=16, nodes=2, procs_per_node=2),
                                         stamp="20261026-093000")
@@ -113,6 +142,9 @@ class AddProgramTests(unittest.TestCase):
         again = S.load_site(path)
         self.assertEqual(again.programs["mine"].directory, "/work/alloc/me/appspector/mine")
         self.assertEqual(again.programs["mine"].viewer_args, "--inject myInject")
+        S.add_program(site, "py", "/d", "c4p-python p.py +pe {pes}", "", "procs=pes")
+        again = S.load_site(path)
+        self.assertEqual((again.programs["py"].viewer_args, again.programs["py"].options), ("", "procs=pes"))
         d, c, v = J.JobSpec(program="mine", args="-x", pes=2, auth=False).resolve(again)
         self.assertEqual((d, c), ("/work/alloc/me/appspector/mine", "./mine -x +pe 2 ++server ++server-port 1234"))
         from appspector.shell import Shell
@@ -217,6 +249,37 @@ class AuthTests(unittest.TestCase):
                 self.assertEqual(len(job.key), 32)
             finally:
                 J.stop(site, job)
+        finally:
+            J.JOBS_FILE = old
+
+    def test_local_stop_kills_the_whole_job(self):
+        """A local job's command can start processes of its own (charmrun.start
+        does); stop must end them too, not just the shell that ran the command."""
+        tmp = tempfile.mkdtemp()
+        prog = os.path.join(tmp, "prog")
+        with open(prog, "w") as f:
+            f.write("#!/bin/sh\nsleep 300 &\necho $! > child.pid\nwait\n")
+        os.chmod(prog, 0o755)
+        site = S.load_site("local")
+        site.work = os.path.join(tmp, "runs")
+        old = J.JOBS_FILE
+        J.JOBS_FILE = os.path.join(tmp, "jobs.json")
+        try:
+            job = J.start(site, J.JobSpec(directory=tmp, command="./prog {pes}", pes=1, auth=False),
+                          log=lambda s: None)
+            pidfile = os.path.join(tmp, "child.pid")
+            deadline = time.time() + 10
+            while time.time() < deadline and not (os.path.exists(pidfile) and open(pidfile).read().strip()):
+                time.sleep(0.05)
+            child = int(open(pidfile).read())
+            self.assertTrue(J._pid_alive(child))
+            J.stop(site, job)
+            deadline = time.time() + 5
+            while time.time() < deadline and J._pid_alive(child):
+                time.sleep(0.05)
+            self.assertFalse(J._pid_alive(child), "the job's child outlived stop")
+            self.assertFalse(J._pid_alive(job.pid))
+            self.assertEqual(job.state, "cancelled")
         finally:
             J.JOBS_FILE = old
 

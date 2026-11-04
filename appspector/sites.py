@@ -24,7 +24,13 @@ writes one) and fetched with ``site fetch``.
     auth = yes                          ; a fresh ++server-auth key per job (default yes)
 
     [programs]
-    name = directory | command line [| viewer options]   ; {args} {pes} {port} are filled in
+    name = directory | command line [| viewer options [| job options]]   ; {args} {pes} {port} are filled in
+
+Job options: ``procs=pes`` starts one process per PE (the processes per
+node default to the PEs per node instead of the site's
+default_procs_per_node; an explicit ppn still wins). charm4py programs
+need it: a charm4py process runs one PE (one Python interpreter), and
+several PEs in one process crash at startup.
 
 Values may use {work}, {appspector}, {home} and, in commands, {args},
 {pes}, {port}, {procs}, {cores_per_proc}.
@@ -46,6 +52,10 @@ class Program:
     directory: str
     command: str          # with {args} {pes} {port} ... placeholders
     viewer_args: str = "" # extra appspector.viewer options, e.g. --inject myHandler --no-image
+    options: str = ""     # job options, e.g. procs=pes (one process per PE, for charm4py)
+
+    def one_pe_per_process(self):
+        return "procs=pes" in self.options.split()
 
 
 @dataclass
@@ -124,7 +134,8 @@ def load_site(name_or_path):
             if "|" not in spec:
                 raise ValueError("%s: program %s needs 'directory | command'" % (path, name))
             parts = [x.strip() for x in spec.split("|")]
-            s.programs[name] = Program(name, s.expand(parts[0]), parts[1], parts[2] if len(parts) > 2 else "")
+            s.programs[name] = Program(name, s.expand(parts[0]), parts[1], parts[2] if len(parts) > 2 else "",
+                                       parts[3] if len(parts) > 3 else "")
     return s
 
 
@@ -137,7 +148,7 @@ def save_site_text(name, text):
     return path
 
 
-def add_program(site, name, directory, command, viewer_args=""):
+def add_program(site, name, directory, command, viewer_args="", options=""):
     """Append a program to the site's file, copying a built-in site file into
     the user directory first so built-ins stay pristine. Returns the path."""
     path = site.path
@@ -148,10 +159,11 @@ def add_program(site, name, directory, command, viewer_args=""):
     cp.read(path)
     if not cp.has_section("programs"):
         cp.add_section("programs")
-    cp["programs"][name] = "%s | %s" % (directory, command) + (" | " + viewer_args if viewer_args else "")
+    cp["programs"][name] = "%s | %s" % (directory, command) + (" | " + viewer_args if viewer_args or options else "") \
+        + (" | " + options if options else "")
     with open(path, "w") as f:
         cp.write(f)
-    site.programs[name] = Program(name, site.expand(directory), command, viewer_args)
+    site.programs[name] = Program(name, site.expand(directory), command, viewer_args, options)
     site.path = path
     return path
 

@@ -214,8 +214,9 @@ compute node.
 ## The shell
 
 The shell is for firing jobs: choose a site, a program and a size, run
-it, and open the viewer when it is up. All interaction with the running
-program (clicks, Balance, the load views) is in the viewer.
+it, and open the viewer when it is up. Interaction with the running
+program (clicks, Balance, the load views) is in the viewer, except
+`steer`, which calls functions a charm4py program exposes.
 
 ```
 python3 -m appspector
@@ -254,6 +255,7 @@ appspector> quit                                # the job keeps running; 'stop' 
 | `log [ID]` | the last lines of the job's output |
 | `attach ID` | make a recorded job current, and wait for it if it is not up yet |
 | `view [ID] [-- VIEWER-ARGS]` | open the viewer on the job (registers the port forward first) |
+| `steer [list]`, `steer NAME [ARGS] [K=V]`, `steer eval SOURCE` | call a function a charm4py job exposes (see [Steering a charm4py program](#steering-a-charm4py-program)) |
 | `stop [ID]` | cancel the job and its forward |
 | `quit` | leave the shell; running jobs keep running |
 
@@ -303,6 +305,7 @@ python3 -m appspector stop ID
 python3 -m appspector jobs            # or: jobs all
 python3 -m appspector sites
 python3 -m appspector script --site delta --program pfield --pes 16
+python3 -m appspector steer ID set_rate 0.5     # or: steer ID list, steer ID eval SOURCE
 ```
 
 `run` submits, waits for the server (up to 6 hours, `--wait SECONDS`),
@@ -441,6 +444,7 @@ in the shell shows the job output alongside.
 | JPEG images (`--jpeg`) | a Charm++ whose configure found libjpeg's headers and library (`CMK_USE_LIBJPEG 1` in `<build>/include/conv-autoconfig.h`, `-ljpeg` in `<build>/lib/libmoduleliveViz.dep`); without it the program answers a JPEG request with nothing and prints `Ignoring liveViz client's unrecognized compressionType 1` in its output. The Delta build from `cluster/setup.sh` has it (`cluster/delta.env` points the build at Spack's libjpeg-turbo; a Delta build made before that does not, rebuild it); laptop builds made after `port install jpeg` do |
 | By-PE and PE-grid panes | linked `-tracemode utilization` (handler `CkPerfObjLoads`, from the trace events, unaffected by `+LBOff` or `LBTurnInstrumentOff`); without it, any Charm++ built from branch `recharm` after 2026-10-23 (handler `LBObjLoads`, which reports the load-balancing database and is empty while that instrumentation is off) |
 | Over-time pane | linked `-tracemode utilization` (Charm++ built `--enable-tracing`); a greyed-out button means the handler is missing and the status line says so |
+| All three load panes, charm4py | `from charm4py import appspector` at the top of the program and `appspector.serve()` once in `main` (see [Load data from charm4py programs](#load-data-from-charm4py-programs)) |
 | Inject click | a CCS handler like pfield's `pfieldInject`; other programs need their own, named with `--inject` |
 | Balance button | a balancer linked and selected with `+balancer`, plus a CCS handler that starts an LB step, named with `--balance` |
 
@@ -448,6 +452,48 @@ The CCS handlers behind these are `lvConfig` and `lvImage` (liveViz),
 `CkPerfObjLoads` or `LBObjLoads` (per-object loads), and `CkPerfSumDetail
 compressed` and `CkPerfSumDetail sts` (the utilization trace; the second
 returns the entry-method names).
+
+### Load data from charm4py programs
+
+A charm4py program feeds all three bottom panes from its own handlers once
+it opts in (charm4py branch `ccs-loads`, module `charm4py.appspector`):
+
+```python
+from charm4py import charm, appspector   # at top level, so every process registers it
+
+def main(args):
+    appspector.serve()     # once; returns when every PE is measuring
+    ...
+
+charm.start(main)
+```
+
+Run it with `++server ++server-port N` as usual. The viewer asks for
+`CkPerfSumDetail sts` first; when the job has no such handler it asks for
+`charm4py SumDetail sts`, and if that answers (the status line says
+`charm4py loads`) it uses `charm4py ObjLoads` and `charm4py SumDetail` for
+the rest of the session. Both use the Charm++ reply layouts, so the panes
+read them unchanged:
+
+- **by PE** and **PE grid**: the time each chare spent in Python entry
+  methods over the last interval, per PE. Array elements keep their color
+  across migration; group members and the mainchare (and charm4py's own
+  internal group, which runs future and reduction callbacks) appear as
+  chares too. Busy time is time inside entry methods, message unpickling
+  included; the rest of the wall time counts as idle.
+- **over time**: one column per poll (`--perf-ms`), the mean over PEs of
+  each Python entry method's share, named `Class.method`. Code a coroutine
+  runs after it resumes from a future or channel is charged to the entry
+  method it started in.
+
+The numbers are measured by charm4py around each entry method
+(`time.perf_counter()`), not by the Charm++ trace, so no tracing build is
+needed. Nothing is collected or sent until the viewer asks: each request
+is one broadcast and one gather over the PEs. A charm4py program that does
+not call `serve()` has no over-time pane, and its by-PE and grid panes come
+from `LBObjLoads` (the C++ load-balancing database), which in a plain
+charm4py program (no `useAtSync` array, instrumentation off) answers with
+PEs but no chares, so the bars stay empty.
 
 ### The status line
 
@@ -463,7 +509,8 @@ returns the entry-method names).
 | `frame ...  raw (no Pillow for JPEG)`, after `...; JPEG off: Pillow is not installed, raw images` | `--jpeg` was given but Pillow is not installed on the laptop (`pip install Pillow`) |
 | `image: the job is gone (...)` or `perf: the job is gone (...)` | the connection was refused, closed or lost: the program ended or was stopped |
 | `image: ...` or `perf: ...` with another error | a request failed for another reason, shown in full |
-| `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization)` | the over-time button is greyed out |
+| `'over time' pane off: the program has no CkPerfSumDetail handler (link it with -tracemode utilization; charm4py: call charm4py.appspector.serve())` | the over-time button is greyed out |
+| `connected: ...; charm4py loads; K entry names` | a charm4py program serving its own loads (`charm4py.appspector.serve()`): all three panes come from it |
 | `'by PE' and 'PE grid' panes off: the program has neither CkPerfObjLoads (-tracemode utilization) nor LBObjLoads (older Charm++)` | those buttons are greyed out; when several panes go off at once, their messages share one line, separated by `;` |
 | `inject at (x, y): sent, waiting for the reply ...` | the click was sent; if nothing replaces it, the program has not answered (yet) |
 | `inject at (x, y): REPLY` | the program's reply to a click |
@@ -494,7 +541,7 @@ interval and the busiest PE.
 | `--perf-ms N` | 1000 | load and utilization request interval |
 | `--fixed-rate` | | keep to `--image-ms` even when image requests are slow |
 | `--pane objects\|ep\|grid` | objects | initial bottom view |
-| `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS |
+| `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS (the viewer still asks the job, to tell a charm4py job that serves its own loads, whose handlers it then uses, from a Charm++ one) |
 | `--no-image` | | do not request images (a program without liveViz) |
 | `--no-perf` | | do not request loads or utilization |
 | `--timeout S` | 10 | seconds before a request fails |
@@ -502,6 +549,7 @@ interval and the busiest PE.
 | `--inject-count N` | 2000 | particles per click |
 | `--inject-sigma F` | 0.03 | blob width as a fraction of the image |
 | `--balance HANDLER` | pfieldBalance | the CCS handler the Balance button sends to |
+| `--steer` | off | add a "Steer:" line for a charm4py program that uses `charm4py.steer`: it lists the exposed calls, and a line typed there (`NAME ARGS`, `list`, `eval SOURCE`) is sent on Enter, the reply going to the status line |
 
 The `.util.sts` file is written next to the program's binary, not in the
 working directory.
@@ -589,6 +637,173 @@ and answer with `CcsSendReply`. Handler names are at most 32 bytes.
 Give the viewer your handler names in the program entry's third field
 (`| --balance myBalance --inject myInject`) or on the command line
 (`view -- --balance myBalance`).
+
+## charm4py programs
+
+appSpector talks CCS, so a charm4py program (Python on Charm++) works too,
+with a few differences. Measured on Delta in November 2026 against Charm++
+recharm 5e3f7e4 (reconverse) and charm4py main; see
+[apps/c4p_demo/README.md](../apps/c4p_demo/README.md) for the numbers.
+
+**Setting up.** After `cluster/setup.sh`, run on the login node
+
+```
+bash cluster/charm4py.sh delta mzu
+```
+
+It makes `$WORK/charm4py`: a venv on the cluster's Python module
+(`PYTHON_MODULE` in `cluster/<site>.env`), a Charm++ clone built for the
+`charm4py` target (reconverse, tracing; 10 to 20 minutes the first time),
+charm4py itself, and `bin/c4p-python`, the venv's interpreter with the
+modules loaded, which batch jobs run. It adds two programs to the site
+file's `[programs]` section, so fetch it again on the laptop (`site fetch delta ...`):
+
+```
+c4p_demo    = {appspector}/apps/c4p_demo | /work/.../charm4py/bin/c4p-python c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port} | --inject c4pInject | procs=pes
+c4p_liveviz = /work/.../charm4py/src/examples/liveviz | /work/.../charm4py/bin/c4p-python liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port} | | procs=pes
+```
+
+Each entry it writes has a comment line `# added by cluster/charm4py.sh ...`
+above it; a rerun replaces those entries and keeps one you wrote or edited
+(no comment line above it: delete the comment to keep your edits). Running
+it again also checks out `C4P_REF` and `C4P_CHARM_REF` again, so a changed
+ref takes effect (a different Charm++ ref needs a rebuild: remove
+`$WORK/charm4py/charm/reconverse-linux-x86_64-charm4py`). With
+`C4P_CHECKOUT=/path/to/charm4py` it installs your checkout as it is: it
+does not apply the liveViz fix there (see Images), only says whether the
+checkout needs it.
+
+Then `program c4p_demo`, `pes 4`, `run`, `view` as for any program.
+
+**One PE per process.** A charm4py process is one Python interpreter and
+runs one PE; several PEs in one process crash at startup. The fourth field
+of a program entry holds job options, and `procs=pes` makes the processes
+per node follow the PEs per node (so `pes 8` on one node runs 8
+processes with one core each). The PEs must split evenly over the nodes
+(`pes 6` with `nodes 4` is refused, with the nearest values that work),
+and an explicit `ppn` that does not give one process per PE is refused
+too (`ppn 0` goes back to the default); leave `ppn` unset for these
+programs. For your own script:
+`program add mine /path/to/dir | /work/.../charm4py/bin/c4p-python mine.py {args} +pe {pes} ++server ++server-port {port} | | procs=pes`.
+
+**What works.** CCS itself, `++server-auth`, `num_pes`/`num_nodes` (the
+viewer's PE layout), liveViz images (`lvConfig`, `lvImage`), and CCS
+handlers the program registers with `charm.CcsRegisterHandler(name, fn)`
+and answers with `charm.CcsSendReply(bytes)`, so clicks work when the
+program has an inject handler (c4p_demo's `c4pInject`). There is no
+Balance handler. The load panes need the program to opt in (see
+[Load data from charm4py programs](#load-data-from-charm4py-programs));
+without it the charm4py target, which has no utilization trace module,
+leaves the "over time" view empty and the per-PE bars without load.
+
+**Images.** Stock charm4py main cannot make an image at all (a TypeError
+in `liveviz.py` aborts the job at the first request); `cluster/charm4py.sh`
+applies a one-line fix to its own clone (and prints whether it applied it,
+found it applied, or found it not needed), which still assembles the image pixel by pixel in
+Python on PE 0: a 1100x400 frame costs 1.2 to 1.7 s on Delta (pfield about
+0.3 s). charm4py branch `liveviz-numpy-v2` (until it is merged upstream)
+assembles with NumPy, parses liveViz version 2 requests and answers JPEG
+through Pillow: 0.15 to 0.2 s per raw 1100x400 frame on Delta, 0.09 s and
+about 130 KB with `--jpeg 75`. That liveViz answers image requests
+strictly in order, one deposit per request, so a program must not drop a
+request it has been handed: c4p_demo serves one per step, oldest first.
+With the appSpector viewer, which keeps one image request outstanding,
+there is never more than one waiting, so the same program works with the
+patched stock liveViz and the fixed one.
+
+**Tracing writes files.** The tracing build writes projections logs
+(`<script>.N.log.gz`, several MB a minute per PE) into the program's
+directory. `+traceoff` on the command line (the entries above have it)
+keeps them to a few KB.
+
+### Steering a charm4py program
+
+A charm4py program can expose Python functions that you call by name
+while it runs, from the shell (`steer`) or the viewer (`--steer`). This
+needs charm4py with the `charm4py.steer` module (branch `ccs-steer` of
+charm4py until it is merged). In the program:
+
+```python
+from charm4py import charm, Chare, Array, steer
+
+@steer.expose
+def set_rate(rate: float):
+    "Set the diffusion rate on every chare."
+    cells.set_rate(rate, awaitable=True).get()   # broadcast, wait for every chare
+    return rate
+
+def main(args):
+    global cells
+    cells = Array(Cell, 16)
+    steer.init()                 # registers the CCS handler c4pSteer on PE 0
+    ...
+charm.start(main)
+```
+
+Import `steer` at the top of the program (before `charm.start`), expose at
+module level or from `main`, and call `steer.init()` once in `main`. A
+function may block on futures (`awaitable=True`, `ret=True`,
+`charm.sleep`): each call runs in its own coroutine on PE 0 and the reply
+waits for it, while PE 0 keeps serving other requests (images, other
+calls). If it returns a charm4py Future, the reply carries the future's
+value. A function that computes for a long time without yielding holds
+PE 0 like any entry method.
+
+From the shell, for the current job (it uses the job's key, and the
+viewer's port forward if one is open). There is one port forward at a
+time, so a `steer` that needs a forward of its own (no viewer of this job
+open) would cut off an open viewer of another job; it refuses then and
+says so: close that viewer first, or steer from a viewer of this job
+(`view ID -- --steer`). Errors start with `steer: `, and the one-shot form
+(`python3 -m appspector steer ID ...`) then exits with status 1.
+
+```
+appspector> steer
+  set_rate(rate: float)    Set the diffusion rate on every chare.
+  eval: off
+appspector> steer set_rate 0.5
+0.5
+appspector> steer set_rate -1
+steer: ValueError: rate must be positive
+Traceback (most recent call last): ...
+```
+
+Arguments are words as in a shell; each is a JSON value if it parses
+(`0.5`, `true`, `null`, `[1,2]`), else a string, and `NAME=VALUE` gives a
+keyword argument. For the string `"3"` quote the JSON quotes:
+`steer f '"3"'`. Results print as JSON. In scripts, `ccsio.steer` does the
+same: `steer.list(server)`, `steer.call(server, "set_rate", 0.5)`,
+`steer.eval(server, source)`; a failed call raises `steer.SteerError` with
+the job's error and traceback.
+
+**Wire format** (CCS handler `c4pSteer`, PE 0). The request is UTF-8 JSON
+`{"call": NAME, "args": [...], "kwargs": {...}}`; the reply is UTF-8 JSON,
+one per request: `{"ok": true, "result": VALUE}` or `{"ok": false,
+"error": "Type: message", "traceback": "..."}`. `list` and `eval` are
+built in, so a function the program exposes as `list` or `eval` cannot be
+called: `list` answers `{"calls": [{"name", "signature", "doc"}, ...],
+"eval": true|false}`, and `eval` takes one argument, Python source, and
+answers the value of an expression or of a trailing expression statement
+(empty source is refused before anything is sent).
+NumPy values come back as numbers and lists, anything else JSON cannot
+hold as its `repr`.
+
+**Security.** `++server-auth` (on by default for jobs `run` starts)
+authenticates every request: only someone with the job's key can call
+anything, and the replies prove the job has the key too. It does not
+encrypt: arguments and results cross the network in the clear, so keep
+the CCS port behind the ssh forward (which encrypts the laptop to login
+node leg) and on the cluster's internal network. Without
+`++server-auth`, anyone who can reach the port can call every exposed
+function. Expose only what a key holder may do; the key file stays mode
+600.
+
+`eval` runs arbitrary Python in the job with your account's rights:
+anyone with the key can do anything you can on the cluster. It is off
+unless the program asks for it, `steer.init(allow_eval=True)`, AND the
+job runs with `++server-auth`; with `allow_eval=True` and no auth the
+program prints a warning and eval stays off. `steer` (list) says whether
+it is on. Every eval is printed in the job's output.
 
 ## Troubleshooting
 

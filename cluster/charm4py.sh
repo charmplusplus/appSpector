@@ -72,6 +72,21 @@ if [ -z "${C4P_CHECKOUT:-}" ] && [ ! -d "$SRC/.git" ]; then
   (cd "$SRC" && git checkout -q "$C4P_REF")
 fi
 cd "$SRC"
+# charm4py main (2026-11) aborts at the first liveViz image: ByteImage.from_contributions does
+# (bytearray + bytes) % 256, which is bytes formatting (TypeError). Same per-pixel sum, done per byte,
+# until upstream has a fix.
+python - charm4py/liveviz.py <<'EOS'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "= (buffer[dst_pos:dst_pos + bytes_per_pixel] + data[src_pos:src_pos + bytes_per_pixel]) % 256"
+new = "= bytes((a + b) % 256 for a, b in zip(buffer[dst_pos:dst_pos + bytes_per_pixel], data[src_pos:src_pos + bytes_per_pixel]))"
+if old in s:
+    open(p, "w").write(s.replace(old, new))
+    print("patched", p, "(liveviz from_contributions)")
+EOS
+# a copied checkout has no version metadata; setup.py then finds its version by importing the source tree
+export PYTHONPATH=$SRC
 export CHARM4PY_CHARM_DIR=$C4P/charm
 export CHARM4PY_BUILD_TRIPLET=$TRIPLET
 export CHARM4PY_CHARM_BUILD_DIR=$C4P/charm/$TRIPLET-charm4py
@@ -80,6 +95,7 @@ export CHARM_EXTRA_BUILD_OPTS=--enable-tracing CHARM_BUILD_PROCESSES=$JOBS
 export CFLAGS="${CFLAGS:-} -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration"
 step "build and install (Charm++ the first time: 10-20 minutes; log $C4P/build.log)"
 pip install --no-build-isolation -v . > "$C4P/build.log" 2>&1 || { echo "charm4py build failed; see $C4P/build.log"; tail -5 "$C4P/build.log"; exit 1; }
+unset PYTHONPATH
 cd /
 "$C4P/bin/c4p-python" -c "import charm4py, os; print('charm4py', os.path.dirname(charm4py.__file__))"
 

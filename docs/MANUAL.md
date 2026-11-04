@@ -639,9 +639,10 @@ There is no Balance handler.
 pixel by pixel, on PE 0, so a 1100x400 frame costs 1.2 to 1.6 s on Delta
 (c4p_demo 1.25 s, of which 0.83 s is the assembly; charm4py's liveviz
 example 1.6 s; pfield about 0.3 s, mostly the transfer). The viewer's
-adaptive poller backs off accordingly, to a frame every 3 to 5 seconds. Stock charm4py main cannot make an image at all (a
-TypeError in `liveviz.py` aborts the job at the first request); use a
-charm4py with that fixed.
+adaptive poller backs off accordingly, to a frame every 3 to 5 seconds.
+Stock charm4py main cannot make an image at all (a TypeError in
+`liveviz.py` aborts the job at the first request); `cluster/charm4py.sh`
+applies a one-line fix until upstream has one.
 
 **Tracing writes files.** The tracing build writes projections logs
 (`<script>.N.log.gz`, several MB a minute per PE) into the program's

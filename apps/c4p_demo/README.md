@@ -48,5 +48,5 @@ when writing your own:
   a separately broadcast request while steps are reducing.
 
 Stock charm4py main's `liveviz.py` aborts at the first image request (a
-TypeError in `ByteImage.from_contributions`); run with a charm4py that has
-that fixed.
+TypeError in `ByteImage.from_contributions`); `cluster/charm4py.sh` applies
+a one-line fix until upstream has one.

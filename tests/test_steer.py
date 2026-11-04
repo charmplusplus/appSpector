@@ -135,8 +135,9 @@ class SteerAuthTests(unittest.TestCase):
             ccsio.Server("127.0.0.1", self.srv.port, key="9" * 32)
         self.assertIn("does not accept our key", str(cm.exception))
         s = ccsio.Server("127.0.0.1", self.srv.port, connect=False)     # no key at all
-        with self.assertRaises(ccsio.CcsError):
+        with self.assertRaises(steer.SteerError) as cm:
             steer.call(s, "set_rate", 0.5)
+        self.assertIn("++server-auth and no key was given", str(cm.exception))
         self.assertFalse(any(r[0] == steer.HANDLER for r in self.srv.requests))
 
 

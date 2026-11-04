@@ -58,6 +58,9 @@ def request(server, name, args=(), kwargs=None, timeout=None):
     try:
         data = server.request(HANDLER, PE, encode_request(name, args, kwargs), timeout=timeout)
     except CcsNoReply:
+        if getattr(server, "key", None) is None:
+            raise SteerError("no reply: the job has no %s handler, or it runs with ++server-auth and "
+                             "no key was given" % HANDLER)
         raise SteerError("no reply: the job has no %s handler (a charm4py program that calls "
                          "charm4py.steer.init())" % HANDLER)
     return decode_reply(data)

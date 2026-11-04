@@ -319,17 +319,18 @@ class Viewer:
                                            adaptive=not self.args.fixed_rate)
                 self.image_poller.start()
             if not self.args.no_perf:
-                if not self.names:
-                    self.names = self.fetch_names(perf.STS_HANDLER)
-                    if not self.names:
-                        # a charm4py job that serves its own loads
-                        # (charm4py.appspector.serve()): its handlers from here on
-                        names = self.fetch_names(perf.C4P_STS_HANDLER)
-                        if names:
-                            self.names = names
-                            self.ep_handler = perf.C4P_HANDLER
-                            self.objload_handler = objload.C4P_HANDLER
-                            msg += "; charm4py loads"
+                # probed even when --sts gave the names: the probe also tells a charm4py
+                # job that serves its own loads (charm4py.appspector.serve()) from a
+                # Charm++ one, and such a job needs its own handlers from here on
+                names = self.fetch_names(perf.STS_HANDLER)
+                if not names:
+                    names = self.fetch_names(perf.C4P_STS_HANDLER)
+                    if names:
+                        self.ep_handler = perf.C4P_HANDLER
+                        self.objload_handler = objload.C4P_HANDLER
+                        msg += "; charm4py loads"
+                if not self.names:          # the --sts file's names win
+                    self.names = names
                 self.has_ep_stream = True
                 msg += "; %d entry names" % len(self.names)
                 self.perf_poller = Poller(self.fetch_loads, self.args.perf_ms / 1000.0, self.perf_q,

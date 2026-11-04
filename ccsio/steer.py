@@ -11,6 +11,12 @@
 Wire format: the request is UTF-8 JSON {"call": NAME, "args": [...],
 "kwargs": {...}}; the reply is UTF-8 JSON {"ok": true, "result": ...} or
 {"ok": false, "error": "Type: message", "traceback": "..."}.
+
+"list" and "eval" are the built-in requests: a function the program
+exposes under either name cannot be called. ``steer.list`` and
+``steer.eval`` keep those names for the API (this module's ``list`` and
+``eval`` shadow the builtins; code here uses ``builtins.list`` and
+``list_calls``/``eval_source``).
 """
 
 import builtins
@@ -78,15 +84,22 @@ def call(server, name, /, *args, timeout=None, **kwargs):
     return _result(request(server, name, args, kwargs, timeout=timeout))
 
 
-def list(server, timeout=None):
+def list_calls(server, timeout=None):
     """What the job exposes: {"calls": [{"name", "signature", "doc"}, ...], "eval": bool}."""
     return _result(request(server, "list", timeout=timeout))
 
 
-def eval(server, source, timeout=None):
+def eval_source(server, source, timeout=None):
     """Run Python source on the job's PE 0 (if the job allows it); returns
     the value of an expression, or of a trailing expression statement."""
+    if not source.strip():
+        raise ValueError("eval needs Python source")
     return _result(request(server, "eval", [source], timeout=timeout))
+
+
+# the documented names (they shadow the builtins inside this module; see the module docstring)
+list = list_calls
+eval = eval_source
 
 
 # -- command-line form (the shell's and the viewer's 'steer' line) -------------
@@ -110,6 +123,8 @@ def parse_command(line):
         return "list", [], {}
     head, _, rest = line.partition(" ")
     if head == "eval":
+        if not rest.strip():
+            raise ValueError("eval needs Python source: steer eval SOURCE")
         return "eval", [rest.strip()], {}
     words = shlex.split(line)
     name, args, kwargs = words[0], [], {}
@@ -148,5 +163,5 @@ def run_command(server, line, timeout=None):
     """One command line -> the text to show (raises SteerError, CcsError, ValueError)."""
     name, args, kwargs = parse_command(line)
     if name == "list":
-        return format_listing(list(server, timeout=timeout))
+        return format_listing(list_calls(server, timeout=timeout))
     return format_result(_result(request(server, name, args, kwargs, timeout=timeout)))

@@ -454,3 +454,36 @@ class Charm4pyPanesTest(unittest.TestCase):
             v.close()
         finally:
             srv.close()
+
+    def test_sts_file_still_detects_charm4py(self):
+        """--sts gives the names; the job is still recognised as a charm4py
+        one, so the over-time pane asks the charm4py handler."""
+        from appspector import viewer as V
+        from ccsio import objload
+        import tempfile
+        import test_ccsio as T
+        sts = os.path.join(tempfile.mkdtemp(), "demo.util.sts")
+        with open(sts, "w") as f:
+            f.write(T.PerfTests.C4P_STS.decode().replace("Cell.work", "FromFile.work"))
+        srv = FakeCcsServer(node_sizes=(2,), close_on_unknown=True)
+        srv.register(perf.C4P_STS_HANDLER, lambda pe, d: T.PerfTests.C4P_STS)
+        srv.register(perf.C4P_HANDLER, lambda pe, d: T.PerfTests.C4P_SUMDETAIL)
+        try:
+            args = argparse.Namespace(
+                host="127.0.0.1", port=srv.port, key=None, size=(120, 80), image_ms=50,
+                perf_ms=50, fixed_rate=False, sts=sts, no_image=True, no_perf=False, timeout=5.0, pane="ep",
+                inject="pfieldInject", inject_count=2000, inject_sigma=0.03, balance="pfieldBalance")
+            root = tk.Tk()
+            root.withdraw()
+            v = V.Viewer(root, args)
+            deadline = time.time() + 5
+            while time.time() < deadline and v.intervals < 2:
+                root.update()
+                time.sleep(0.02)
+            self.assertEqual(v.ep_handler, perf.C4P_HANDLER)
+            self.assertEqual(v.objload_handler, objload.C4P_HANDLER)
+            self.assertEqual(perf.ep_name(v.names, 12), "FromFile.work")
+            self.assertIn(perf.C4P_HANDLER, [r[0] for r in srv.requests])
+            v.close()
+        finally:
+            srv.close()

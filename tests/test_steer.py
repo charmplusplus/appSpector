@@ -154,6 +154,15 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(p("eval  y = [x for x in range(3)]; y "), ("eval", ["y = [x for x in range(3)]; y"], {}))
         with self.assertRaises(ValueError):
             p("f a=1 2")
+        for empty in ("eval", "eval   "):
+            with self.assertRaises(ValueError):
+                p(empty)
+        # the documented API names are the module's functions; the builtins still work in it
+        self.assertIs(steer.list, steer.list_calls)
+        self.assertIs(steer.eval, steer.eval_source)
+        self.assertEqual(steer.encode_request("f", (1, 2)), b'{"call": "f", "args": [1, 2], "kwargs": {}}')
+        with self.assertRaises(ValueError):
+            steer.eval(None, "  ")
         self.assertEqual(steer.format_result("text"), "text")
         self.assertEqual(steer.format_result({"a": [1]}), '{"a": [1]}')
 
@@ -161,16 +170,20 @@ class ParseTests(unittest.TestCase):
 class ShellSteerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.saved = (J.JOBS_FILE, J.connect, J._port_free)
+        self.saved = (J.JOBS_FILE, J.connect, J._port_free, L.FWD_FILE)
         J.JOBS_FILE = os.path.join(self.tmp, "jobs.json")
+        L.FWD_FILE = os.path.join(self.tmp, "forward")
         self.state = {}
         self.srv = FakeCcsServer(node_sizes=(1,), key=ccsio.parse_key(KEY))
         self.srv.register(steer.HANDLER, steer_handler(make_calls(self.state)))
         self.connects = []
 
         def connect(site, job, local_port=None):
+            # what jobs.connect does: one forward at a time, recorded in FWD_FILE
             self.connects.append(job.id)
-            job.forward = "%d:cn001:1304" % self.srv.port
+            job.forward = "%d:%s:1304" % (self.srv.port, job.node)
+            if site.scheduler != "local":
+                self.set_forward(job.forward)
             return "127.0.0.1", self.srv.port
         J.connect = connect
         from appspector.shell import Shell
@@ -183,8 +196,18 @@ class ShellSteerTests(unittest.TestCase):
         self.sh.current = self.job
 
     def tearDown(self):
-        J.JOBS_FILE, J.connect, J._port_free = self.saved
+        J.JOBS_FILE, J.connect, J._port_free, L.FWD_FILE = self.saved
         self.srv.close()
+
+    def set_forward(self, spec):
+        with open(L.FWD_FILE, "w") as f:
+            f.write(spec)
+
+    def slurm(self):
+        from appspector import sites as S
+        site = S.Site(name="cluster", path="", scheduler="slurm")
+        self.sh._site_of = lambda job: site
+        return site
 
     def test_steer_commands(self):
         self.sh.do_steer("")
@@ -204,11 +227,10 @@ class ShellSteerTests(unittest.TestCase):
     def test_reuses_an_open_forward(self):
         """A slurm job whose forward (the viewer's) is listening: steer uses
         it rather than registering a new forward, which would replace it."""
-        from appspector import sites as S
-        site = S.Site(name="cluster", path="", scheduler="slurm")
+        self.slurm()
         self.job.forward = "%d:cn001:1304" % self.srv.port
+        self.set_forward(self.job.forward)
         J._port_free = lambda port: port != self.srv.port
-        self.sh._site_of = lambda job: site
         self.sh.do_steer("set_rate 0.25")
         self.assertEqual(self.out[-1], "0.25")
         self.assertEqual(self.connects, [])
@@ -218,6 +240,47 @@ class ShellSteerTests(unittest.TestCase):
         self.sh.do_steer("status")
         self.assertEqual(self.connects, ["777"])
 
+    def test_forward_of_another_job_not_reused(self):
+        """view A; view B; steer A: A's record still names its old forward,
+        but the registered one (and the busy port) is B's now. steer must
+        connect A afresh, and a server cached for A is dropped once the
+        registered forward has changed."""
+        self.slurm()
+        J._port_free = lambda port: port != self.srv.port      # B's forward listens there
+        self.job.forward = "%d:cn001:1304" % self.srv.port      # left over from 'view A'
+        self.set_forward("%d:cn002:1304" % self.srv.port)       # 'view B' replaced it
+        self.sh.do_steer("status")
+        self.assertEqual(self.connects, ["777"])                # not reused
+        self.assertEqual(L.forward_current(), "%d:cn001:1304" % self.srv.port)
+        self.sh.do_steer("status")
+        self.assertEqual(self.connects, ["777"])                # cached while the forward is A's
+        self.set_forward("%d:cn002:1304" % self.srv.port)       # another 'view B'
+        self.sh.do_steer("status")
+        self.assertEqual(self.connects, ["777", "777"])         # cache dropped, connected again
+        self.assertFalse(self.sh.steer_failed)
+
+    def test_does_not_cut_another_jobs_viewer(self):
+        """steer A would register a forward, replacing the one an open viewer
+        of job B uses: refused, with what to do."""
+        self.slurm()
+        b_forward = "%d:cn002:1304" % self.srv.port
+        self.set_forward(b_forward)
+        self.job.forward = ""
+        viewer = type("P", (), {"poll": lambda self: self.rc, "rc": None,
+                                "appspector_job": "888", "appspector_forward": b_forward})()
+        self.sh.viewers.append(viewer)
+        self.sh.do_steer("status")
+        self.assertEqual(self.connects, [])
+        self.assertTrue(self.out[-1].startswith("steer: job 777 has no port forward"))
+        self.assertIn("job 888", self.out[-1])
+        self.assertIn("view 777 -- --steer", self.out[-1])
+        self.assertTrue(self.sh.steer_failed)
+        self.assertEqual(L.forward_current(), b_forward)        # B's forward untouched
+        viewer.rc = 0                                           # B's viewer closed: go ahead
+        self.sh.do_steer("status")
+        self.assertEqual(self.connects, ["777"])
+        self.assertFalse(self.sh.steer_failed)
+
     def test_wrong_key_and_not_up(self):
         self.job.key = "1" * 32
         self.sh.do_steer("status")
@@ -225,10 +288,11 @@ class ShellSteerTests(unittest.TestCase):
         self.assertNotIn("777", self.sh._steer_servers)
         self.job.state = "running"
         self.sh.do_steer("status")
-        self.assertEqual(self.out[-1], "job 777 is running, not up")
+        self.assertEqual(self.out[-1], "steer: job 777 is running, not up")
         self.sh.current = None
         self.sh.do_steer("")
-        self.assertIn("no current job", self.out[-1])
+        self.assertEqual(self.out[-1], "steer: no current job ('run', or 'attach ID')")
+        self.assertTrue(self.sh.steer_failed)
 
     def test_one_shot(self):
         import io
@@ -241,6 +305,16 @@ class ShellSteerTests(unittest.TestCase):
         with redirect_stdout(buf):
             rc = shell.main(["steer", "777", "nope"])
         self.assertEqual(rc, 1)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = shell.main(["steer", "777", "eval"])          # empty eval: an error, nothing sent
+        self.assertEqual((rc, buf.getvalue()), (1, "steer: eval needs Python source: steer eval SOURCE\n"))
+        self.job.state = "ended"
+        J.record(self.job)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = shell.main(["steer", "777", "status"])
+        self.assertEqual((rc, buf.getvalue()), (1, "steer: job 777 is ended, not up\n"))
         with redirect_stderr(io.StringIO()):
             self.assertEqual(shell.main(["steer", "999"]), 1)
 

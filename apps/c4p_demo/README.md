@@ -11,7 +11,13 @@ image's green tint shows each chare's load.
 - **Image**: liveViz through `charm4py.liveviz`. An `lvImage` request is
   carried by the next step: every chare paints its share of the requested
   width x height from its patch and deposits it, so the image always fills
-  the viewer's pane.
+  the viewer's pane. Each step serves one request, the oldest first, and
+  never skips one: the fixed liveViz (charm4py branch `liveviz-numpy-v2`)
+  answers requests strictly in order with one deposit each, so a dropped
+  request would hand every later reply to the wrong request. This works
+  with stock charm4py (with `cluster/charm4py.sh`'s fix) and with the fixed
+  liveViz alike, since the appSpector viewer has at most one image request
+  outstanding: there is never more than one to serve.
 - **Clicks**: `c4pInject` takes the viewer's click payload (x, y, sigma as
   network-order doubles, an int32 count) and adds a second hot spot there
   for `-bump` seconds. The site entry passes `--inject c4pInject`.
@@ -49,4 +55,6 @@ when writing your own:
 
 Stock charm4py main's `liveviz.py` aborts at the first image request (a
 TypeError in `ByteImage.from_contributions`); `cluster/charm4py.sh` applies
-a one-line fix until upstream has one.
+a one-line fix to its own clone until upstream has one (it reports, and
+leaves alone, a checkout you give it with `C4P_CHECKOUT`, and says "not
+needed" for the NumPy liveViz of branch `liveviz-numpy-v2`).

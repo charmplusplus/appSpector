@@ -88,6 +88,17 @@ def _find_forward_pid(spec):
     return pids[0] if pids else 0
 
 
+def forward_current():
+    """The forward registered now ("local:node:remote"), "" when there is
+    none. One forward at a time: forward_add replaces it, whichever job or
+    site it belonged to."""
+    try:
+        with open(FWD_FILE) as f:
+            return f.read().strip().partition(" ")[0]
+    except OSError:
+        return ""
+
+
 def forward_cancel(site):
     if not os.path.exists(FWD_FILE):
         return

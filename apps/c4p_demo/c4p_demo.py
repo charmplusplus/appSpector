@@ -12,7 +12,10 @@ Images: liveViz (charm4py.liveviz). A viewer's lvImage request is handed
 to the driver, and the next ``step`` carries it: each chare paints its
 share of the requested width x height image from its patch and deposits
 it, then contributes to the step's reduction. The image therefore fits the
-viewer's pane and shows the latest step.
+viewer's pane and shows the latest step. Each step serves one request,
+the oldest waiting: liveViz answers requests in the order they came, one
+deposit per request, so none may be skipped (with the appSpector viewer,
+which keeps one request outstanding, at most one waits anyway).
 
 Why not deposit straight from the request (the library's example
 broadcasts the request to the array)? charm4py's deposit is a reduction
@@ -133,9 +136,11 @@ class Driver(Chare):
         self.k = self.done_at = 0
 
     def go(self):
-        # liveviz keeps one outstanding request; a newer one replaces older ones
-        request = PENDING.pop() if PENDING else None
-        del PENDING[:]
+        # one request per step, oldest first, none dropped: charm4py's liveViz (the fixed one of
+        # branch liveviz-numpy-v2) answers requests strictly in order, one deposit each, so a
+        # skipped request would pair every later reply with the wrong request. The appSpector
+        # viewer has at most one image request outstanding, so the queue is one long at most.
+        request = PENDING.pop(0) if PENDING else None
         self.cells.step(time.time() - self.t0, self.thisProxy.stepped, request)
 
     def stepped(self, result=None):

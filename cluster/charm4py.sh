@@ -18,7 +18,10 @@
 #   C4P_CHARM_REF (Charm++ commit or branch, default recharm),
 #   C4P_REF (charm4py commit or branch, default main),
 #   C4P_CHECKOUT (an existing charm4py checkout to install instead of cloning).
-# Re-running skips what is built; to rebuild Charm++ remove $WORK/charm4py/charm.
+#   (with C4P_CHECKOUT the liveviz fix below is reported, not applied: it is your checkout)
+# Re-running skips what is built but checks out the refs again, so a changed C4P_REF or
+# C4P_CHARM_REF takes effect; to rebuild Charm++ remove $WORK/charm4py/charm/$TRIPLET-charm4py
+# (reconverse-linux-x86_64-charm4py), or all of $WORK/charm4py/charm.
 set -eu
 SITE=${1:-${SITE:-}}
 ALLOC=${2:-${ALLOC:-}}
@@ -59,32 +62,28 @@ python --version
 pip -q install --upgrade pip setuptools wheel cython numpy greenlet patchelf pillow
 
 step "Charm++ ($CHARM_REF) for the charm4py target"
-if [ ! -d "$C4P/charm/.git" ]; then
-  git clone -q https://github.com/charmplusplus/charm.git "$C4P/charm"
-  (cd "$C4P/charm" && git checkout -q "$CHARM_REF" && git submodule update --init contrib/reconverse)
-fi
-(cd "$C4P/charm" && git log -1 --oneline)
+# checkout and submodule update run every time (cheap): a rerun finishes a clone a failure
+# interrupted, and follows a changed C4P_CHARM_REF (a changed ref needs a Charm++ rebuild:
+# remove $C4P/charm/$TRIPLET-charm4py)
+[ -d "$C4P/charm/.git" ] || git clone -q https://github.com/charmplusplus/charm.git "$C4P/charm"
+(cd "$C4P/charm" && { git checkout -q "$CHARM_REF" 2>/dev/null || { git fetch -q origin && git checkout -q "$CHARM_REF"; }; } \
+   && git submodule update -q --init contrib/reconverse && git log -1 --oneline)
 
 step "charm4py ($C4P_REF)"
-SRC=${C4P_CHECKOUT:-$C4P/src}
-if [ -z "${C4P_CHECKOUT:-}" ] && [ ! -d "$SRC/.git" ]; then
-  git clone -q https://github.com/charmplusplus/charm4py.git "$SRC"
-  (cd "$SRC" && git checkout -q "$C4P_REF")
+if [ -n "${C4P_CHECKOUT:-}" ]; then
+  SRC=$C4P_CHECKOUT
+  echo "using your checkout $SRC as it is (C4P_REF is not applied to it)"
+  python "$REPO/cluster/c4p_setup.py" liveviz "$SRC" --check     # reports; never edits your checkout
+else
+  SRC=$C4P/src
+  [ -d "$SRC/.git" ] || git clone -q https://github.com/charmplusplus/charm4py.git "$SRC"
+  # our clone: undo the liveviz fix (if a previous run applied it) so the checkout can move, then
+  # check out C4P_REF every time (it may have changed) and apply the fix again where it is needed
+  (cd "$SRC" && { git checkout -q -- charm4py/liveviz.py 2>/dev/null || true; } && \
+   { git checkout -q "$C4P_REF" 2>/dev/null || { git fetch -q origin && git checkout -q "$C4P_REF"; }; } && git log -1 --oneline)
+  python "$REPO/cluster/c4p_setup.py" liveviz "$SRC"
 fi
 cd "$SRC"
-# charm4py main (2026-11) aborts at the first liveViz image: ByteImage.from_contributions does
-# (bytearray + bytes) % 256, which is bytes formatting (TypeError). Same per-pixel sum, done per byte,
-# until upstream has a fix.
-python - charm4py/liveviz.py <<'EOS'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = "= (buffer[dst_pos:dst_pos + bytes_per_pixel] + data[src_pos:src_pos + bytes_per_pixel]) % 256"
-new = "= bytes((a + b) % 256 for a, b in zip(buffer[dst_pos:dst_pos + bytes_per_pixel], data[src_pos:src_pos + bytes_per_pixel]))"
-if old in s:
-    open(p, "w").write(s.replace(old, new))
-    print("patched", p, "(liveviz from_contributions)")
-EOS
 # a copied checkout has no version metadata; setup.py then finds its version by importing the source tree
 export PYTHONPATH=$SRC
 export CHARM4PY_CHARM_DIR=$C4P/charm
@@ -102,28 +101,9 @@ cd /
 step "programs in $WORK/site.ini"
 SITEFILE=$WORK/site.ini
 if [ -f "$SITEFILE" ]; then
-  python - "$SITEFILE" "$C4P" "$SRC" <<'EOS'
-import re, sys
-# edits the text in place (configparser would drop the file's comments); setup.sh writes
-# [programs] as the last section, so the entries are appended at the end
-path, c4p, src = sys.argv[1:4]
-py = c4p + "/bin/c4p-python"
-entries = [
-    "c4p_demo = {appspector}/apps/c4p_demo | %s c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
-    " | --inject c4pInject | procs=pes" % py,
-    "c4p_liveviz = %s/examples/liveviz | %s liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port}"
-    " | | procs=pes" % (src, py),
-]
-lines = [l for l in open(path).read().splitlines() if not re.match(r"\s*(c4p_demo|c4p_liveviz)\s*=", l)]
-while lines and not lines[-1].strip():
-    lines.pop()
-sections = [l.strip() for l in lines if l.strip().startswith("[")]
-if not sections or sections[-1] != "[programs]":
-    lines += ["", "[programs]"]
-with open(path, "w") as f:
-    f.write("\n".join(lines + entries) + "\n")
-print("added c4p_demo and c4p_liveviz to", path)
-EOS
+  # into the existing [programs] section (added only if the file has none); entries you edited
+  # (no "added by cluster/charm4py.sh" line above them) are kept
+  python "$REPO/cluster/c4p_setup.py" programs "$SITEFILE" "$C4P" "$SRC"
 else
   echo "no $SITEFILE (run cluster/setup.sh first); program lines to add by hand:"
   echo "  c4p_demo = {appspector}/apps/c4p_demo | $C4P/bin/c4p-python c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port} | --inject c4pInject | procs=pes"

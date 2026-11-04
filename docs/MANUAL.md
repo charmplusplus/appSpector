@@ -541,7 +541,7 @@ interval and the busiest PE.
 | `--perf-ms N` | 1000 | load and utilization request interval |
 | `--fixed-rate` | | keep to `--image-ms` even when image requests are slow |
 | `--pane objects\|ep\|grid` | objects | initial bottom view |
-| `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS |
+| `--sts FILE` | | the job's `.util.sts` file, for entry-method names; without it the names come over CCS (the viewer still asks the job, to tell a charm4py job that serves its own loads, whose handlers it then uses, from a Charm++ one) |
 | `--no-image` | | do not request images (a program without liveViz) |
 | `--no-perf` | | do not request loads or utilization |
 | `--timeout S` | 10 | seconds before a request fails |
@@ -656,21 +656,34 @@ It makes `$WORK/charm4py`: a venv on the cluster's Python module
 `charm4py` target (reconverse, tracing; 10 to 20 minutes the first time),
 charm4py itself, and `bin/c4p-python`, the venv's interpreter with the
 modules loaded, which batch jobs run. It adds two programs to the site
-file, so fetch it again on the laptop (`site fetch delta ...`):
+file's `[programs]` section, so fetch it again on the laptop (`site fetch delta ...`):
 
 ```
 c4p_demo    = {appspector}/apps/c4p_demo | /work/.../charm4py/bin/c4p-python c4p_demo.py {args} +traceoff +pe {pes} ++server ++server-port {port} | --inject c4pInject | procs=pes
 c4p_liveviz = /work/.../charm4py/src/examples/liveviz | /work/.../charm4py/bin/c4p-python liveviz.py {args} +traceoff +pe {pes} ++server ++server-port {port} | | procs=pes
 ```
 
+Each entry it writes has a comment line `# added by cluster/charm4py.sh ...`
+above it; a rerun replaces those entries and keeps one you wrote or edited
+(no comment line above it: delete the comment to keep your edits). Running
+it again also checks out `C4P_REF` and `C4P_CHARM_REF` again, so a changed
+ref takes effect (a different Charm++ ref needs a rebuild: remove
+`$WORK/charm4py/charm/reconverse-linux-x86_64-charm4py`). With
+`C4P_CHECKOUT=/path/to/charm4py` it installs your checkout as it is: it
+does not apply the liveViz fix there (see Images), only says whether the
+checkout needs it.
+
 Then `program c4p_demo`, `pes 4`, `run`, `view` as for any program.
 
 **One PE per process.** A charm4py process is one Python interpreter and
 runs one PE; several PEs in one process crash at startup. The fourth field
 of a program entry holds job options, and `procs=pes` makes the processes
-per node default to the PEs per node (so `pes 8` on one node runs 8
-processes with one core each). An explicit `ppn` still wins, so do not set
-one for these programs. For your own script:
+per node follow the PEs per node (so `pes 8` on one node runs 8
+processes with one core each). The PEs must split evenly over the nodes
+(`pes 6` with `nodes 4` is refused, with the nearest values that work),
+and an explicit `ppn` that does not give one process per PE is refused
+too (`ppn 0` goes back to the default); leave `ppn` unset for these
+programs. For your own script:
 `program add mine /path/to/dir | /work/.../charm4py/bin/c4p-python mine.py {args} +pe {pes} ++server ++server-port {port} | | procs=pes`.
 
 **What works.** CCS itself, `++server-auth`, `num_pes`/`num_nodes` (the
@@ -685,12 +698,18 @@ leaves the "over time" view empty and the per-PE bars without load.
 
 **Images.** Stock charm4py main cannot make an image at all (a TypeError
 in `liveviz.py` aborts the job at the first request); `cluster/charm4py.sh`
-applies a one-line fix, which still assembles the image pixel by pixel in
+applies a one-line fix to its own clone (and prints whether it applied it,
+found it applied, or found it not needed), which still assembles the image pixel by pixel in
 Python on PE 0: a 1100x400 frame costs 1.2 to 1.7 s on Delta (pfield about
 0.3 s). charm4py branch `liveviz-numpy-v2` (until it is merged upstream)
 assembles with NumPy, parses liveViz version 2 requests and answers JPEG
 through Pillow: 0.15 to 0.2 s per raw 1100x400 frame on Delta, 0.09 s and
-about 130 KB with `--jpeg 75`.
+about 130 KB with `--jpeg 75`. That liveViz answers image requests
+strictly in order, one deposit per request, so a program must not drop a
+request it has been handed: c4p_demo serves one per step, oldest first.
+With the appSpector viewer, which keeps one image request outstanding,
+there is never more than one waiting, so the same program works with the
+patched stock liveViz and the fixed one.
 
 **Tracing writes files.** The tracing build writes projections logs
 (`<script>.N.log.gz`, several MB a minute per PE) into the program's
@@ -731,7 +750,12 @@ value. A function that computes for a long time without yielding holds
 PE 0 like any entry method.
 
 From the shell, for the current job (it uses the job's key, and the
-viewer's port forward if one is open):
+viewer's port forward if one is open). There is one port forward at a
+time, so a `steer` that needs a forward of its own (no viewer of this job
+open) would cut off an open viewer of another job; it refuses then and
+says so: close that viewer first, or steer from a viewer of this job
+(`view ID -- --steer`). Errors start with `steer: `, and the one-shot form
+(`python3 -m appspector steer ID ...`) then exits with status 1.
 
 ```
 appspector> steer
@@ -756,9 +780,11 @@ the job's error and traceback.
 `{"call": NAME, "args": [...], "kwargs": {...}}`; the reply is UTF-8 JSON,
 one per request: `{"ok": true, "result": VALUE}` or `{"ok": false,
 "error": "Type: message", "traceback": "..."}`. `list` and `eval` are
-built in: `list` answers `{"calls": [{"name", "signature", "doc"}, ...],
+built in, so a function the program exposes as `list` or `eval` cannot be
+called: `list` answers `{"calls": [{"name", "signature", "doc"}, ...],
 "eval": true|false}`, and `eval` takes one argument, Python source, and
-answers the value of an expression or of a trailing expression statement.
+answers the value of an expression or of a trailing expression statement
+(empty source is refused before anything is sent).
 NumPy values come back as numbers and lists, anything else JSON cannot
 hold as its `repr`.
 

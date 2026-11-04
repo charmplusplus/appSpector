@@ -51,7 +51,8 @@ class Shell(cmd.Cmd):
         self.current = None          # Job
         self.viewers = []
         self._waiters = []
-        self._steer_servers = {}     # job id -> ccsio.Server, kept between steer commands
+        self._steer_servers = {}     # job id -> (ccsio.Server, the forward it uses), kept between steer commands
+        self.steer_failed = False    # the last steer command failed (the one-shot form's exit status)
 
     # -- helpers --------------------------------------------------------------
     def say(self, text):
@@ -327,19 +328,37 @@ entry in the site file can carry them as a third field so they apply every time.
         self.say("viewer on %s:%d%s (close its window to come back; the job keeps running)"
                  % (host, port, ", authenticated" if job.key else ""))
         p = subprocess.Popen(cmdline)
+        # which job and forward it uses: steer must not replace a forward an open viewer needs
+        p.appspector_job, p.appspector_forward = job.id, job.forward if site.scheduler != "local" else ""
         self.viewers.append(p)
 
     def _reach(self, site, job):
-        """(host, port) of the job's CCS server for a steer command. A forward
-        already in place (the viewer's) is reused: registering another would
-        replace it (one forward per site), cutting the open viewer off."""
-        if site.scheduler != "local" and job.forward:
+        """(host, port) of the job's CCS server for a steer command. The
+        forward registered now is reused when it is this job's (the viewer's,
+        say): registering another would replace it (one forward at a time),
+        cutting an open viewer off. A forward string left on the job's record
+        after a later 'view' of another job replaced it is not reused: that
+        port leads to the other job now. Raises LaunchError instead of
+        replacing a forward an open viewer of another job uses."""
+        if site.scheduler == "local":
+            return J.connect(site, job)
+        current = L.forward_current()
+        if job.forward and current == job.forward:
             try:
                 local = int(job.forward.split(":")[0])
             except ValueError:
                 local = 0
             if local and not J._port_free(local):
                 return "127.0.0.1", local
+        if current:
+            for p in self.viewers:
+                other = getattr(p, "appspector_job", None)
+                if (other and other != job.id and getattr(p, "appspector_forward", "") == current
+                        and p.poll() is None):
+                    raise L.LaunchError(
+                        "job %s has no port forward, and registering one would cut off the open viewer of "
+                        "job %s (one forward at a time). Close that viewer and steer again, or steer from a "
+                        "viewer on this job: close it, then 'view %s -- --steer'." % (job.id, other, job.id))
         return J.connect(site, job)
 
     def do_steer(self, arg):
@@ -347,13 +366,15 @@ entry in the site file can carry them as a third field so they apply every time.
 steer NAME [ARGS...] [K=V...]  call one; each value is JSON if it parses (0.5, true, [1,2], "text"), else a string
 steer eval SOURCE              run Python on the job's PE 0 (only if the program allows it and the job runs with auth)
 The call runs in the job; the shell waits for its reply (up to the timeout, 60 s). Uses the job's key and
-its port forward (the viewer's, if one is open)."""
+its port forward (the viewer's, if one is open). Functions the program names list or eval cannot be called:
+those names are the built-in requests."""
+        self.steer_failed = True
         job = self.current
         if job is None:
-            self.say("no current job ('run', or 'attach ID')")
+            self.say("steer: no current job ('run', or 'attach ID')")
             return
         if job.state != "up":
-            self.say("job %s is %s, not up" % (job.id, job.state))
+            self.say("steer: job %s is %s, not up" % (job.id, job.state))
             return
         import ccsio
         from ccsio import steer
@@ -362,13 +383,19 @@ its port forward (the viewer's, if one is open)."""
         except ValueError as e:
             self.say("steer: %s" % e)
             return
-        server = self._steer_servers.get(job.id)
+        site = self._site_of(job)
+        server, forward = self._steer_servers.get(job.id, (None, ""))
+        if server is not None and site.scheduler != "local" and forward != L.forward_current():
+            # the forward it went through was replaced (a 'view' of another job): reconnect
+            self._steer_servers.pop(job.id, None)
+            server = None
         try:
             if server is None:
-                host, port = self._reach(self._site_of(job), job)
+                host, port = self._reach(site, job)
                 server = ccsio.Server(host, port, key=job.key or None)
-                self._steer_servers[job.id] = server
+                self._steer_servers[job.id] = (server, job.forward if site.scheduler != "local" else "")
             self.say(steer.run_command(server, arg))
+            self.steer_failed = False
         except steer.SteerError as e:
             self.say("steer: %s" % e.error)
             if e.traceback:
@@ -465,7 +492,7 @@ def steer_one_shot(words):
     sh.do_steer(" ".join(shlex.quote(w) for w in words[1:]) if words[1:2] != ["eval"]
                 else "eval " + " ".join(words[2:]))
     print("\n".join(out))
-    return 1 if out and out[0].startswith("steer: ") else 0
+    return 1 if sh.steer_failed else 0
 
 
 def main(argv=None):

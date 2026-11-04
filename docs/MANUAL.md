@@ -487,9 +487,10 @@ The numbers are measured by charm4py around each entry method
 (`time.perf_counter()`), not by the Charm++ trace, so no tracing build is
 needed. Nothing is collected or sent until the viewer asks: each request
 is one broadcast and one gather over the PEs. A charm4py program that does
-not call `serve()` shows the by-PE and grid panes only if its Charm++ answers
-`LBObjLoads` (C++ load-balancing data, keyed by Charm++ ids), and no
-over-time pane.
+not call `serve()` has no over-time pane, and its by-PE and grid panes come
+from `LBObjLoads` (the C++ load-balancing database), which in a plain
+charm4py program (no `useAtSync` array, instrumentation off) answers with
+PEs but no chares, so the bars stay empty.
 
 ### The status line
 

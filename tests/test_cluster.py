@@ -64,6 +64,15 @@ class ProgramsTests(unittest.TestCase):
         self.assertEqual(text.count("[programs]"), 1)
         self.assertEqual(set(load(text).programs), {"c4p_demo", "c4p_liveviz"})
 
+    def test_unmarked_entry_from_an_earlier_version(self):
+        """The script before the mark wrote the same line without it: adopted, not duplicated."""
+        old = SETUP_INI + ENTRIES[0][1] + "\n"
+        text, msgs = C.add_programs(old, ENTRIES)
+        self.assertEqual(msgs[0], "c4p_demo is up to date (now marked as this script's)")
+        self.assertEqual(text.count("c4p_demo ="), 1)
+        self.assertEqual(text.count(C.MARK), 2)
+        self.assertEqual(C.add_programs(text, ENTRIES)[0], text)
+
     def test_user_entry_kept_marked_one_replaced(self):
         mine = "c4p_demo = /home/me/demo | python mine.py +pe {pes} ++server ++server-port {port} | | procs=pes"
         text, _ = C.add_programs(SETUP_INI + mine + "\n", ENTRIES)

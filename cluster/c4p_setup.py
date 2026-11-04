@@ -60,6 +60,10 @@ def add_programs(text, entries):
             else:
                 lines[at:last + 1] = [entry]
                 msgs.append("updated %s" % name)
+        elif lines[at:last + 1] == [entry]:
+            # written by an earlier version of this script (no mark yet), unchanged since
+            lines[at:at] = [MARK]
+            msgs.append("%s is up to date (now marked as this script's)" % name)
         else:
             msgs.append("kept your own %s entry (no '%s' line above it); the one this script would write:\n  %s"
                         % (name, MARK[:30] + "...", entry))

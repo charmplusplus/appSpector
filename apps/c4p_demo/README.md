@@ -27,6 +27,14 @@ Run one PE per process (`procs=pes` in the site entry does this):
     srun --mpi=pmix -n 4 c4p-python c4p_demo.py +traceoff +pe 4 ++server ++server-port 1234
     python -m charmrun.start +p4 c4p_demo.py +traceoff ++server ++server-port 1234     # laptop
 
+Measured on Delta (job 23524531; 4 processes x 1 PE, cpu-interactive,
+viewer on the laptop through an ssh forward, raw 1100x400): 1263 ms per
+image request (median of 21, of which 0.83 s is charm4py's Python image
+assembly on PE 0), a frame every 3 to 5 s with the viewer's adaptive
+pacing, 150 to 270 steps/s while the viewer polls. pfield on the same path:
+about 0.30 s per image. On an M-series laptop: 340 ms per request, 450
+steps/s while viewing, 900 without.
+
 Two charm4py (main, 2026-11) pitfalls this program avoids, worth knowing
 when writing your own:
 

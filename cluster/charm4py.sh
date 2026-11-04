@@ -76,6 +76,8 @@ export CHARM4PY_CHARM_DIR=$C4P/charm
 export CHARM4PY_BUILD_TRIPLET=$TRIPLET
 export CHARM4PY_CHARM_BUILD_DIR=$C4P/charm/$TRIPLET-charm4py
 export CHARM_EXTRA_BUILD_OPTS=--enable-tracing CHARM_BUILD_PROCESSES=$JOBS
+# GCC 14 (Delta's cc) turns these into errors; charm4py's generated Cython code needs them as warnings
+export CFLAGS="${CFLAGS:-} -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration"
 step "build and install (Charm++ the first time: 10-20 minutes; log $C4P/build.log)"
 pip install --no-build-isolation -v . > "$C4P/build.log" 2>&1 || { echo "charm4py build failed; see $C4P/build.log"; tail -5 "$C4P/build.log"; exit 1; }
 cd /
